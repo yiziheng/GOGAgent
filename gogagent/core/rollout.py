@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -49,10 +50,19 @@ class RolloutEngine:
         )
         self.token_budget = token_budget
 
-    def run(self, task: Mapping[str, Any], episode_id: str | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        task: Mapping[str, Any],
+        episode_id: str | None = None,
+        artifact_directory: str | Path | None = None,
+    ) -> dict[str, Any]:
         episode_id = episode_id or uuid4().hex[:10]
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        directory = self.artifact_root / run_id / self.adapter.name / episode_id
+        directory = (
+            Path(artifact_directory)
+            if artifact_directory is not None
+            else self.artifact_root / run_id / self.adapter.name / episode_id
+        )
         snapshot_directory = directory / "snapshots"
         snapshot_directory.mkdir(parents=True, exist_ok=True)
         trace_path = directory / "trace.jsonl"
@@ -62,7 +72,7 @@ class RolloutEngine:
         history_transition_count = len(gog.transitions)
         compiler = MacroCompiler(self.adapter, self.constraints)
         executor = IncrementalExecutor(self.adapter, self.llm)
-        graph = self.adapter.base_graph(task)
+        graph = _with_runner(self.adapter.base_graph(task), _backend_name(self.llm))
         self.constraints.validate(graph)
         execution = executor.execute(graph, task)
         used_tokens = execution.token_cost
@@ -113,7 +123,10 @@ class RolloutEngine:
                 )
                 break
             previous_graph = graph
-            graph = compiler.compile(graph, decision.action, execution.visible_feedback)
+            graph = _with_runner(
+                compiler.compile(graph, decision.action, execution.visible_feedback),
+                _backend_name(self.llm),
+            )
             execution = executor.execute(graph, task, execution)
             used_tokens += execution.token_cost
             summary = self.supervisor.summarize(execution, used_tokens, self.token_budget)
@@ -143,6 +156,12 @@ class RolloutEngine:
             "history_snapshot_count": history_snapshot_count,
             "history_transition_count": history_transition_count,
             "used_tokens": used_tokens,
+            "llm_calls": sum(
+                record.get("execution", {}).get("llm_calls", 0)
+                for record in _read_trace(trace_path)
+                if record.get("event") == "snapshot"
+            ),
+            "backend": _backend_name(self.llm),
         }
         (directory / "result.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2),
@@ -156,3 +175,19 @@ def _append_trace(path: Path, event: str, payload: Mapping[str, Any]) -> None:
     record = {"event": event, **payload}
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _backend_name(llm: LLMBackend) -> str:
+    return str(getattr(llm, "name", type(llm).__name__))
+
+
+def _with_runner(graph: Any, runner: str) -> Any:
+    return replace(
+        graph,
+        nodes=tuple(replace(node, runner=runner) for node in graph.nodes),
+    )
+
+
+def _read_trace(path: Path) -> list[dict[str, Any]]:
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]

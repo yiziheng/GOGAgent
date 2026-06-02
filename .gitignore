@@ -1,4 +1,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-artifacts/runs/
+*.egg-info/
+artifacts/
+data/

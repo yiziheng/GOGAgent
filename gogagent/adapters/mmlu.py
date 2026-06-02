@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
@@ -21,6 +22,14 @@ from gogagent.llm.base import LLMBackend
 
 
 _OPTION_LABELS = ("A", "B", "C", "D")
+_ANSWER_ROLES = {
+    "Solver",
+    "Resolver",
+    "Rechecker",
+    "SecondOpinionSolver",
+    "Adjudicator",
+}
+_REVIEW_ROLES = {"OptionCritic", "Rechecker"}
 
 _SUBJECT_PROFILES = {
     "stem": {
@@ -225,8 +234,8 @@ class MMLUAdapter(DomainAdapter):
         prior_cache = dict(previous.cache) if previous else {}
         cache = dict(prior_cache)
         node_outputs: dict[str, str] = {}
-        generated_outputs: list[str] = []
         llm_calls = 0
+        token_cost = 0
         for node_id in topological_order(graph):
             node = nodes[node_id]
             context = {source: node_outputs[source] for source in sorted(incoming[node_id])}
@@ -234,23 +243,40 @@ class MMLUAdapter(DomainAdapter):
             cache_key = _cache_key(node, prompt, context)
             output = prior_cache.get(cache_key)
             if output is None:
-                output = llm.generate(node.role, prompt, context)
+                response = llm.generate(node.role, prompt, context)
+                output = response.text
                 cache[cache_key] = output
-                generated_outputs.append(output)
                 llm_calls += 1
+                token_cost += response.total_tokens
             node_outputs[node_id] = output
 
-        option_scores = _option_scores(question, options, subject, graph, node_outputs)
-        predicted_option = max(option_scores, key=option_scores.get)
-        sorted_scores = sorted(option_scores.values(), reverse=True)
-        margin = sorted_scores[0] - sorted_scores[1]
-        base_option = _base_option(question, options, subject)
+        answer_source = _answer_tail(graph)
+        parsed_options = {
+            node_id: _parse_final_option(node_outputs[node_id])
+            for node_id, node in nodes.items()
+            if node.role in _ANSWER_ROLES
+        }
+        failed_option_nodes = tuple(
+            sorted(node_id for node_id, option in parsed_options.items() if option is None)
+        )
+        predicted_option = parsed_options[answer_source]
+        final_output = predicted_option or ""
         checker_present = "option_critic" in nodes
         revised = "rechecker" in nodes
         alternative_present = "second_opinion_solver" in nodes
-        checker_disagreement = checker_present and predicted_option != base_option
-        second_opinion_disagreement = alternative_present and (
-            _salted_option(question, options, subject, "second-opinion") != predicted_option
+        solver_option = parsed_options.get("solver")
+        checker_disagreement = (
+            checker_present
+            and solver_option is not None
+            and predicted_option is not None
+            and solver_option != predicted_option
+        )
+        second_opinion_option = parsed_options.get("second_opinion_solver")
+        second_opinion_disagreement = (
+            alternative_present
+            and second_opinion_option is not None
+            and predicted_option is not None
+            and second_opinion_option != predicted_option
         )
         disagreement = (
             "high"
@@ -259,12 +285,19 @@ class MMLUAdapter(DomainAdapter):
             if checker_disagreement or second_opinion_disagreement
             else "none"
         )
-        confidence = "high" if margin >= 0.16 else "medium" if margin >= 0.07 else "low"
+        option_parse_failed = bool(failed_option_nodes)
+        confidence = (
+            "low"
+            if option_parse_failed
+            else "medium"
+            if disagreement != "none" or not checker_present
+            else "high"
+        )
         issue_codes = _issue_codes(
             checker_present=checker_present,
             revised=revised,
-            margin=margin,
             disagreement=disagreement,
+            option_parse_failed=option_parse_failed,
         )
         status = "ready" if checker_present and not issue_codes else "needs_review"
         feedback = VisibleFeedback(
@@ -274,21 +307,24 @@ class MMLUAdapter(DomainAdapter):
             issue_codes=issue_codes,
             signals={
                 "predicted_option": predicted_option,
-                "option_scores": {key: round(value, 6) for key, value in option_scores.items()},
-                "option_score_margin": round(margin, 6),
+                "answer_source": answer_source,
+                "parsed_options": parsed_options,
+                "option_parse_failed_nodes": failed_option_nodes,
                 "contradiction_count": int(checker_disagreement),
                 "evidence_coverage": _evidence_coverage(graph),
                 "checker_disagreement": checker_disagreement,
-                "answer_changed": bool(previous and previous.final_output != predicted_option),
+                "second_opinion_disagreement": second_opinion_disagreement,
+                "answer_changed": bool(previous and previous.final_output != final_output),
                 "subject_profile": profile,
+                "label_blind": True,
             },
         )
         return ExecutionResult(
             graph_id=graph.graph_id,
-            final_output=predicted_option,
+            final_output=final_output,
             node_outputs=node_outputs,
             visible_feedback=feedback,
-            token_cost=sum(max(len(output) // 4, 1) for output in generated_outputs),
+            token_cost=token_cost,
             llm_calls=llm_calls,
             cache=cache,
         )
@@ -330,11 +366,18 @@ def _public_options(task: Mapping[str, Any]) -> tuple[str, ...]:
 
 def _node_prompt(role: str, profile: str, question: str, options: Sequence[str]) -> str:
     option_text = " ".join(f"{label}. {value}" for label, value in zip(_OPTION_LABELS, options))
-    return (
+    prompt = (
         f"MMLU profile={profile}. Act as {role}. "
         f"Question: {question} Options: {option_text}. "
         "Use only the provided question, options, and predecessor outputs."
     )
+    if role in _REVIEW_ROLES:
+        prompt += " Report a structured review line: ISSUES: <none|comma-separated issue codes>."
+    if role in _ANSWER_ROLES:
+        prompt += " End with exactly one line: FINAL: <A|B|C|D>."
+    else:
+        prompt += " Provide analysis only. Do not output a FINAL line."
+    return prompt
 
 
 def _cache_key(node: NodeSpec, prompt: str, context: Mapping[str, str]) -> str:
@@ -342,44 +385,24 @@ def _cache_key(node: NodeSpec, prompt: str, context: Mapping[str, str]) -> str:
     return f"mmlu:{node.node_id}:{sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
 
-def _option_scores(
-    question: str,
-    options: Sequence[str],
-    subject: str,
-    graph: OrgGraphSnapshot,
-    node_outputs: Mapping[str, str],
-) -> dict[str, float]:
-    structure = tuple(sorted(node.role for node in graph.nodes))
-    evidence = tuple(sorted(node_outputs.items()))
-    raw_scores = []
-    for label, option in zip(_OPTION_LABELS, options):
-        material = repr((question, tuple(options), subject, structure, evidence, label, option))
-        raw_scores.append(1 + int(sha256(material.encode("utf-8")).hexdigest()[:8], 16) % 1000)
-    total = float(sum(raw_scores))
-    return {label: raw / total for label, raw in zip(_OPTION_LABELS, raw_scores)}
-
-
-def _base_option(question: str, options: Sequence[str], subject: str) -> str:
-    return _salted_option(question, options, subject, "base-solver")
-
-
-def _salted_option(question: str, options: Sequence[str], subject: str, salt: str) -> str:
-    material = repr((question, tuple(options), subject, salt))
-    index = int(sha256(material.encode("utf-8")).hexdigest()[:8], 16) % len(_OPTION_LABELS)
-    return _OPTION_LABELS[index]
+def _parse_final_option(output: str) -> str | None:
+    options = re.findall(r"(?im)^\s*FINAL\s*:\s*([A-D])\s*$", output)
+    if len(options) == 1:
+        return options[0].upper()
+    return None
 
 
 def _issue_codes(
     checker_present: bool,
     revised: bool,
-    margin: float,
     disagreement: str,
+    option_parse_failed: bool,
 ) -> tuple[str, ...]:
     issues: list[str] = []
+    if option_parse_failed:
+        issues.append("option_parse_failed")
     if not checker_present:
         issues.append("unchecked_answer")
-    if margin < 0.07:
-        issues.append("low_option_margin")
     if disagreement != "none" and not revised:
         issues.append("unresolved_option_conflict")
     return tuple(issues)
@@ -396,14 +419,11 @@ def _evidence_coverage(graph: OrgGraphSnapshot) -> float:
 
 
 def _answer_tail(graph: OrgGraphSnapshot) -> str:
-    outgoing = {node.node_id: 0 for node in graph.nodes}
-    for edge in graph.edges:
-        outgoing[edge.src] += 1
-    sinks = {node_id for node_id, count in outgoing.items() if count == 0}
-    for preferred in ("adjudicator", "rechecker", "resolver", "option_critic", "solver"):
-        if preferred in sinks:
+    node_ids = {node.node_id for node in graph.nodes}
+    for preferred in ("adjudicator", "rechecker", "resolver", "solver", "second_opinion_solver"):
+        if preferred in node_ids:
             return preferred
-    raise ValueError("MMLU graph does not contain an answer-producing sink")
+    raise ValueError("MMLU graph does not contain an answer-producing node")
 
 
 def _downstream_from(graph: OrgGraphSnapshot, source: str) -> tuple[str, ...]:

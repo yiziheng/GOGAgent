@@ -176,7 +176,7 @@ def _snapshot_from_dict(data: dict[str, Any]) -> OrgGraphSnapshot:
             NodeSpec(
                 node_id=node["node_id"],
                 role=node["role"],
-                runner=node.get("runner", "mock_llm"),
+                runner=node.get("runner", "openai_compatible"),
                 profile=node.get("profile", ""),
                 metadata=node.get("metadata", {}),
             )

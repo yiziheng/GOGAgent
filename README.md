@@ -1,58 +1,30 @@
 # GOGAgent
 
-`GOGAgent` is a lightweight, network-free MVP for supervisor-guided Organization
-Graph-of-Graphs construction. It is intentionally separate from `GDesigner`.
+`GOGAgent` constructs task-specific multi-agent DAGs inside an Organization
+Graph-of-Graphs (GoG). The production workflow supports `mmlu`, `gsm8k`, and
+`humaneval` with a real OpenAI-compatible LLM backend.
 
-## Core Design
+## Architecture
 
 ```text
-shared typed macro policy
-  -> DomainAdapter compiler
-  -> executable inner DAG snapshot
-  -> label-blind observation + Supervisor summary
+public benchmark task
+  -> shared typed macro policy
+  -> domain adapter compiler
+  -> executable inner agent DAG snapshot
+  -> label-blind feedback + fixed Supervisor
   -> outer Organization GoG memory
 ```
 
-Each outer GoG node is a complete executable MAS DAG snapshot. Every non-terminal
-macro edit creates a new snapshot and an `E_edit` transition. Lightweight
-`E_sim` edges connect structurally similar snapshots. `QScorer` reads neighbor
-statistics so GoG participates in decisions instead of acting as a log.
+Every non-terminal macro edit creates a complete immutable snapshot and an
+`E_edit` edge. Lightweight `E_sim` edges connect structurally similar
+snapshots. The `QScorer` consumes neighbor statistics from persisted GoG
+memory, so prior training experience can change later graph construction.
 
-The train-only `gogagent.training` package pushes terminal oracle quality down
-to each selected macro edit with distance decay, visible-feedback shaping, and
-local token-cost penalties. It stores only shaped experience summaries in GoG;
-gold values are not retained.
+Gold labels remain outside inference. Dataset loaders return
+`DatasetExample(public_task, gold)`, but `RolloutEngine` receives only
+`public_task`. Evaluation or training code scores the result after rollout.
 
-`OrganizationGoG.save()` and `OrganizationGoG.load()` persist those label-free
-experience summaries. Pass a loaded checkpoint as `RolloutEngine(...,
-gog_memory=memory)` to seed a new episode with frozen historical snapshots and
-neighbor statistics while keeping the original training memory unchanged.
-
-The MVP supports:
-
-- `gsm8k`
-- `mmlu`
-- `humaneval`
-
-The runtime never imports train-only reward oracles. MMLU labels therefore
-cannot enter prompts, policy state, the Supervisor, action masks, or inference
-GoG memory.
-
-## Dataset Boundary
-
-`gogagent.datasets` contains dependency-free loaders for canonical GSM8K JSONL,
-MMLU CSV directories, and HumanEval JSONL. Each loader returns a
-`DatasetExample(public_task, gold)` split. Pass only `public_task` into
-`RolloutEngine.run`; import `gogagent.oracle.registry` only from future
-training code.
-
-## Environment
-
-The current MVP runtime deliberately uses only the Python standard library.
-The dependency files still install `gogagent` as a package so commands work
-outside the repository root.
-
-### Conda Server Setup
+## Server Setup
 
 ```bash
 git clone git@github.com:yiziheng/GOGAgent.git
@@ -62,53 +34,110 @@ conda activate GOGAgent
 bash scripts/verify_compile.sh
 ```
 
-### Pip Server Setup
+`scripts/verify_compile.sh` performs production compile, import, CLI-help, and
+mock-reference checks. It does not consume API quota.
 
-```bash
-git clone git@github.com:yiziheng/GOGAgent.git
-cd GOGAgent
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-bash scripts/verify_compile.sh
-```
+## Backend Configuration
 
-Install the development dependencies when running `pytest`:
-
-```bash
-python -m pip install -r requirements-dev.txt
-pytest
-```
-
-## Compile And Smoke Check
-
-No API key or dataset download is required:
-
-```bash
-conda run -n GOGAgent bash scripts/verify_compile.sh
-```
-
-Run one mock episode:
-
-```bash
-conda run -n GOGAgent python -m gogagent.cli --domain mmlu
-```
-
-## Visible Graph Artifacts
-
-Every rollout writes:
+The CLI defaults to:
 
 ```text
-artifacts/runs/<timestamp>/<domain>/<episode>/
-  result.json
-  trace.jsonl
-  gog.json
-  gog.svg
-  snapshots/
-    <graph-id>.json
-    <graph-id>.svg
+base URL: https://api.deepseek.com
+model:    deepseek-v4-flash
 ```
 
-The JSON files are replayable debugging records. The SVG files can be opened
-directly to inspect generated agent DAGs and the outer Graph-of-Graphs.
+Supply credentials only through interactive stdin. Do not save API keys in the
+repository, command-line arguments, environment variables, shell history,
+`.env`, artifacts, or GoG memory.
+
+```bash
+bash scripts/run_mmlu_full.sh
+```
+
+Optional runtime variables:
+
+```text
+GOGAGENT_TIMEOUT_SECONDS
+GOGAGENT_MAX_RETRIES
+GOGAGENT_MAX_TOKENS
+GOGAGENT_TEMPERATURE
+```
+
+Backend manifests store only credential-free settings.
+
+## MMLU Training And Evaluation
+
+Place the copied MMLU data inside the repository:
+
+```text
+data/MMLU/
+  dev/
+  test/
+```
+
+Run the complete resumable workflow:
+
+```bash
+bash scripts/run_mmlu_full.sh
+```
+
+Equivalent explicit commands:
+
+```bash
+python -m gogagent.cli train-mmlu \
+  --data-path data/MMLU/dev \
+  --split dev \
+  --run-id deepseek-v4-flash-mmlu-dev \
+  --api-key-stdin \
+  --resume
+
+python -m gogagent.cli eval \
+  --dataset mmlu \
+  --data-path data/MMLU/test \
+  --split test \
+  --run-id deepseek-v4-flash-mmlu-test \
+  --workers 8 \
+  --gog-memory artifacts/training/deepseek-v4-flash-mmlu-dev/memory.json \
+  --api-key-stdin \
+  --resume
+```
+
+Results are written incrementally:
+
+```text
+artifacts/training/<run-id>/
+  memory.json
+  train_summary.json
+
+artifacts/evals/<run-id>/
+  manifest.json
+  events.jsonl
+  summary.json
+  summary.tsv
+  items/<task-id>-<digest>/
+    input.json
+    status.json
+    result.json
+    rollout/
+      result.json
+      trace.jsonl
+      gog.json
+      gog.svg
+      snapshots/*.json
+      snapshots/*.svg
+```
+
+Restart the same command with `--resume` to skip completed items.
+
+## Other Benchmarks
+
+GSM8K and HumanEval use the same `eval` entrypoint:
+
+```bash
+python -m gogagent.cli eval --dataset gsm8k --data-path data/gsm8k.jsonl --run-id gsm8k-run
+python -m gogagent.cli eval --dataset humaneval --data-path data/humaneval.jsonl --run-id humaneval-run
+```
+
+HumanEval is fail-closed: generated code is never executed by the main
+evaluation process. Configure `GOGAGENT_HUMANEVAL_SANDBOX_COMMAND` with a
+separately deployed, container-isolated worker before scoring HumanEval.

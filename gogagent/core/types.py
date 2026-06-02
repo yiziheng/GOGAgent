@@ -15,7 +15,7 @@ JsonMap = dict[str, Any]
 class NodeSpec:
     node_id: str
     role: str
-    runner: str = "mock_llm"
+    runner: str = "openai_compatible"
     profile: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 

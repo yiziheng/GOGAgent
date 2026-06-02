@@ -22,6 +22,18 @@ from gogagent.core.types import (
 from gogagent.llm.base import LLMBackend
 
 
+_PYTHON_FENCE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_CHECKER_ISSUE_RE = re.compile(
+    r"\b(?:bug|bugs|defect|defects|error|errors|fail|failed|failure|incorrect|issue|issues|mistake|mistakes|wrong)\b",
+    re.IGNORECASE,
+)
+_NEGATED_CHECKER_ISSUE_RE = re.compile(
+    r"\b(?:no|not|without|zero)\s+"
+    r"(?:apparent\s+|detected\s+|obvious\s+|remaining\s+)?"
+    r"(?:bugs?|defects?|errors?|failures?|incorrect|issues?|mistakes?|wrong)\b",
+    re.IGNORECASE,
+)
+_CHECKER_ROLES = {"CodeChecker", "Rechecker"}
 _ROLE_TO_NODE_ID = {
     "Solver": "solver",
     "CodePlanner": "code_planner",
@@ -154,15 +166,16 @@ class HumanEvalAdapter(DomainAdapter):
             if cache_key in cache:
                 output = cache[cache_key]
             else:
-                output = llm.generate(role=node.role, prompt=role_prompt, context=context)
+                response = llm.generate(role=node.role, prompt=role_prompt, context=context)
+                output = response.text
                 cache[cache_key] = output
-                token_cost += _token_estimate(role_prompt, output, context)
+                token_cost += response.total_tokens
                 llm_calls += 1
             outputs[node.node_id] = output
 
         roles = {node.role for node in graph.nodes}
         final_node = _final_output_node(roles)
-        feedback = _visible_feedback(roles)
+        feedback = _visible_feedback(graph, final_node, outputs, llm_calls)
         return ExecutionResult(
             graph_id=graph.graph_id,
             final_output=outputs[final_node],
@@ -226,11 +239,6 @@ def _cache_key(node: NodeSpec, prompt: str, context: Mapping[str, str]) -> str:
         sort_keys=True,
     )
     return sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _token_estimate(prompt: str, output: str, context: Mapping[str, str]) -> int:
-    text = " ".join((prompt, output, *context.values()))
-    return max(1, len(text.split()))
 
 
 def _slug(value: str) -> str:
@@ -322,43 +330,93 @@ def _graph_depth(graph: OrgGraphSnapshot) -> int:
     return max(depth_by_node.values(), default=0)
 
 
-def _visible_feedback(roles: set[str]) -> VisibleFeedback:
-    if "Adjudicator" in roles:
-        return VisibleFeedback(
-            status="adjudicated",
-            confidence_bucket="high",
-            disagreement_level="low",
-            signals={"alternative_attached": True, "label_blind": True},
-        )
-    if "Rechecker" in roles:
-        return VisibleFeedback(
-            status="rechecked",
-            confidence_bucket="high",
-            signals={"revision_attached": True, "label_blind": True},
-        )
-    if "CodeChecker" in roles:
-        return VisibleFeedback(
-            status="reviewed",
-            confidence_bucket="medium",
-            issue_codes=("revision_not_attempted",),
-            signals={"checker_attached": True, "label_blind": True},
-        )
-    return VisibleFeedback(
-        status="unchecked",
-        confidence_bucket="low",
-        issue_codes=("verification_missing",),
-        signals={"checker_attached": False, "label_blind": True},
+def _visible_feedback(
+    graph: OrgGraphSnapshot,
+    answer_source: str,
+    outputs: Mapping[str, str],
+    llm_calls: int,
+) -> VisibleFeedback:
+    roles = {node.role for node in graph.nodes}
+    candidate = _extract_python_code(outputs[answer_source])
+    code_extractable = bool(candidate)
+    python_compile_ok = _python_compiles(candidate)
+    checker_issue_nodes = tuple(
+        node.node_id
+        for node in graph.nodes
+        if node.role in _CHECKER_ROLES and _checker_reports_issue(outputs[node.node_id])
     )
+    has_checker = "CodeChecker" in roles
+
+    issues: list[str] = []
+    if not code_extractable:
+        issues.append("python_code_missing")
+    elif not python_compile_ok:
+        issues.append("python_compile_failed")
+    if checker_issue_nodes:
+        issues.append("checker_reported_issue")
+    if not has_checker:
+        issues.append("static_review_missing")
+
+    confidence = (
+        "low"
+        if not code_extractable or not python_compile_ok
+        else "medium"
+        if checker_issue_nodes or not has_checker
+        else "high"
+    )
+    return VisibleFeedback(
+        status="needs_review" if issues else "ready",
+        confidence_bucket=confidence,
+        disagreement_level="medium" if checker_issue_nodes else "none",
+        issue_codes=tuple(issues),
+        signals={
+            "has_plan": "CodePlanner" in roles,
+            "has_checker": has_checker,
+            "has_revision": "CodeReviser" in roles,
+            "has_rechecker": "Rechecker" in roles,
+            "has_alternative": "Adjudicator" in roles,
+            "answer_source": answer_source,
+            "code_extractable": code_extractable,
+            "python_compile_ok": python_compile_ok,
+            "checker_reported_issue": bool(checker_issue_nodes),
+            "checker_issue_nodes": checker_issue_nodes,
+            "node_count": len(graph.nodes),
+            "executed_llm_calls": llm_calls,
+            "label_blind": True,
+        },
+    )
+
+
+def _extract_python_code(output: str) -> str:
+    matches = _PYTHON_FENCE.findall(output)
+    if matches:
+        return matches[0].strip()
+    return output.strip()
+
+
+def _python_compiles(candidate: str) -> bool:
+    if not candidate:
+        return False
+    try:
+        compile(candidate, "<humaneval-public-feedback>", "exec")
+    except (SyntaxError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _checker_reports_issue(text: str) -> bool:
+    observable_text = _NEGATED_CHECKER_ISSUE_RE.sub("", text)
+    return _CHECKER_ISSUE_RE.search(observable_text) is not None
 
 
 def _role_prompt(role: str, task_prompt: str) -> str:
     instructions = {
-        "Solver": "Write a concise Python implementation for the HumanEval task.",
+        "Solver": "Write a concise Python implementation for the HumanEval task. Return only the complete implementation fenced as ```python ... ```.",
         "CodePlanner": "Outline a concise implementation plan and edge cases.",
         "CodeChecker": "Review the candidate implementation for likely defects.",
-        "CodeReviser": "Return an improved Python implementation using the review.",
+        "CodeReviser": "Return an improved complete Python implementation using the review. Return only the implementation fenced as ```python ... ```.",
         "Rechecker": "Recheck the revised implementation for likely defects.",
-        "IndependentCodeSolver": "Solve the Python task independently.",
-        "Adjudicator": "Choose or synthesize the strongest Python implementation.",
+        "IndependentCodeSolver": "Solve the Python task independently. Return only the complete implementation fenced as ```python ... ```.",
+        "Adjudicator": "Choose or synthesize the strongest complete Python implementation. Return only the implementation fenced as ```python ... ```.",
     }
     return f"{instructions[role]}\n\nTask:\n{task_prompt}"

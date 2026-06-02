@@ -1,6 +1,6 @@
 """LLM backend abstractions."""
 
-from gogagent.llm.base import LLMBackend
-from gogagent.llm.mock import MockLLM
+from gogagent.llm.base import LLMBackend, LLMResponse
+from gogagent.llm.openai_compatible import OpenAICompatibleLLM
 
-__all__ = ["LLMBackend", "MockLLM"]
+__all__ = ["LLMBackend", "LLMResponse", "OpenAICompatibleLLM"]

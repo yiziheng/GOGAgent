@@ -22,6 +22,31 @@ from gogagent.core.types import (
 from gogagent.llm.base import LLMBackend
 
 
+_NUMBER_PATTERN = (
+    r"[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
+    r"(?:[eE][-+]?\d+)?(?:\s*/\s*[-+]?\d[\d,]*)?"
+)
+_NUMBER_RE = re.compile(_NUMBER_PATTERN)
+_FINAL_NUMBER_RE = re.compile(rf"\bFINAL\s*:\s*({_NUMBER_PATTERN})\s*$", re.IGNORECASE)
+_CHECKER_ISSUE_RE = re.compile(
+    r"\b(?:error|errors|fail|failed|failure|incorrect|issue|issues|mistake|mistakes|wrong)\b",
+    re.IGNORECASE,
+)
+_NEGATED_CHECKER_ISSUE_RE = re.compile(
+    r"\b(?:no|not|without|zero)\s+"
+    r"(?:apparent\s+|arithmetic\s+|calculation\s+|detected\s+|obvious\s+)?"
+    r"(?:error|errors|failures?|incorrect|issues?|mistakes?|wrong)\b",
+    re.IGNORECASE,
+)
+_ANSWER_ROLES = {
+    "Adjudicator",
+    "IndependentMathSolver",
+    "MathReviser",
+    "Rechecker",
+    "Solver",
+}
+_CHECKER_ROLES = {"ArithmeticChecker", "Rechecker"}
+
 _ROLE_TO_ID = {
     "Solver": "solver",
     "MathDecomposer": "math_decomposer",
@@ -149,15 +174,16 @@ class GSM8KAdapter(DomainAdapter):
             if cache_key in cache:
                 output = cache[cache_key]
             else:
-                output = llm.generate(node.role, prompt, context)
+                response = llm.generate(node.role, prompt, context)
+                output = response.text
                 cache[cache_key] = output
                 llm_calls += 1
-                token_cost += self._token_estimate(prompt, output, context)
+                token_cost += response.total_tokens
             outputs[node.node_id] = output
 
         answer_source = self._answer_source(graph)
         final_output = outputs[answer_source]
-        feedback = self._visible_feedback(graph, answer_source, llm_calls)
+        feedback = self._visible_feedback(graph, answer_source, outputs, llm_calls)
         return ExecutionResult(
             graph_id=graph.graph_id,
             final_output=final_output,
@@ -195,13 +221,13 @@ class GSM8KAdapter(DomainAdapter):
     @staticmethod
     def _prompt(role: str, question: str) -> str:
         instructions = {
-            "Solver": "Solve the word problem. End with a single numeric answer.",
+            "Solver": "Solve the word problem. End with exactly: FINAL: <number>.",
             "MathDecomposer": "Break the word problem into explicit arithmetic steps.",
             "ArithmeticChecker": "Check the candidate arithmetic and report any issue.",
-            "MathReviser": "Revise the candidate answer using the arithmetic review.",
-            "Rechecker": "Recheck the revised answer and end with a single numeric answer.",
-            "IndependentMathSolver": "Solve independently and end with a single numeric answer.",
-            "Adjudicator": "Compare both candidates and end with the best single numeric answer.",
+            "MathReviser": "Revise the candidate answer using the arithmetic review. End with exactly: FINAL: <number>.",
+            "Rechecker": "Recheck the revised answer. End with exactly: FINAL: <number>.",
+            "IndependentMathSolver": "Solve independently. End with exactly: FINAL: <number>.",
+            "Adjudicator": "Compare both candidates and choose the best answer. End with exactly: FINAL: <number>.",
         }
         return f"{instructions[role]}\nQuestion: {question}"
 
@@ -215,19 +241,7 @@ class GSM8KAdapter(DomainAdapter):
         return sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _token_estimate(prompt: str, output: str, context: Mapping[str, str]) -> int:
-        text = " ".join((prompt, output, *context.values()))
-        return max(1, len(text.split()))
-
-    @staticmethod
     def _answer_source(graph: OrgGraphSnapshot) -> str:
-        answer_roles = {
-            "Adjudicator",
-            "Rechecker",
-            "MathReviser",
-            "Solver",
-            "IndependentMathSolver",
-        }
         incoming: dict[str, list[str]] = defaultdict(list)
         outgoing: dict[str, list[str]] = defaultdict(list)
         indegree = {node.node_id: 0 for node in graph.nodes}
@@ -258,7 +272,7 @@ class GSM8KAdapter(DomainAdapter):
             "Rechecker": 3,
             "Adjudicator": 4,
         }
-        candidates = [node for node in graph.nodes if node.role in answer_roles]
+        candidates = [node for node in graph.nodes if node.role in _ANSWER_ROLES]
         if not candidates:
             raise ValueError("GSM8K graph has no answer-producing node")
         selected = max(candidates, key=lambda node: (depths[node.node_id], priority[node.role]))
@@ -329,39 +343,66 @@ class GSM8KAdapter(DomainAdapter):
     def _visible_feedback(
         graph: OrgGraphSnapshot,
         answer_source: str,
+        outputs: Mapping[str, str],
         llm_calls: int,
     ) -> VisibleFeedback:
         roles = {node.role for node in graph.nodes}
         has_checker = "ArithmeticChecker" in roles
         has_revision = "Rechecker" in roles
         has_alternative = "Adjudicator" in roles
+        numeric_answers = {
+            node.node_id: numeric_answer
+            for node in graph.nodes
+            if node.role in _ANSWER_ROLES
+            if (numeric_answer := _extract_numeric_answer(outputs[node.node_id])) is not None
+        }
+        final_numeric_answer = numeric_answers.get(answer_source)
+        checker_issue_nodes = tuple(
+            node.node_id
+            for node in graph.nodes
+            if node.role in _CHECKER_ROLES and _checker_reports_issue(outputs[node.node_id])
+        )
+        distinct_numeric_answers = set(numeric_answers.values())
 
-        if has_revision:
-            status = "revised"
-            confidence = "high"
-            issues: tuple[str, ...] = ()
-        elif has_checker:
-            status = "checked"
-            confidence = "medium"
-            issues = ("revision_not_attempted",)
-        else:
-            status = "draft"
-            confidence = "low"
-            issues = ("arithmetic_unchecked",)
+        issues: list[str] = []
+        if final_numeric_answer is None:
+            issues.append("numeric_answer_missing")
+        if checker_issue_nodes:
+            issues.append("checker_reported_issue")
+        if not has_checker:
+            issues.append("arithmetic_unchecked")
 
-        disagreement = "medium" if has_alternative else "none"
         return VisibleFeedback(
-            status=status,
-            confidence_bucket=confidence,
-            disagreement_level=disagreement,
-            issue_codes=issues,
+            status="needs_review" if issues else "observed",
+            confidence_bucket="unknown",
+            disagreement_level="medium" if len(distinct_numeric_answers) > 1 else "none",
+            issue_codes=tuple(issues),
             signals={
                 "has_analysis": "MathDecomposer" in roles,
                 "has_checker": has_checker,
                 "has_revision": has_revision,
                 "has_alternative": has_alternative,
                 "answer_source": answer_source,
+                "numeric_answer": final_numeric_answer,
+                "numeric_answers_by_node": numeric_answers,
+                "checker_reported_issue": bool(checker_issue_nodes),
+                "checker_issue_nodes": checker_issue_nodes,
                 "node_count": len(graph.nodes),
                 "executed_llm_calls": llm_calls,
             },
         )
+
+
+def _extract_numeric_answer(text: str) -> str | None:
+    explicit = _FINAL_NUMBER_RE.search(text.strip())
+    if explicit:
+        return explicit.group(1).replace(",", "").replace(" ", "")
+    matches = _NUMBER_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].replace(",", "").replace(" ", "")
+
+
+def _checker_reports_issue(text: str) -> bool:
+    observable_text = _NEGATED_CHECKER_ISSUE_RE.sub("", text)
+    return _CHECKER_ISSUE_RE.search(observable_text) is not None
