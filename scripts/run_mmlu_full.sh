@@ -3,10 +3,11 @@ set -euo pipefail
 
 ALLOWED_ROOT="/data2/jiangjiaqi/yzh"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_ROOT="${DATA_ROOT:-${PROJECT_ROOT}/data/MMLU}"
+TRAIN_DATA_ROOT="${TRAIN_DATA_ROOT:-${PROJECT_ROOT}/data/MMLU_subsets/train_test150}"
+EVAL_DATA_ROOT="${EVAL_DATA_ROOT:-${PROJECT_ROOT}/data/MMLU_subsets/eval_gptswarm_val153}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-${PROJECT_ROOT}/artifacts}"
-TRAIN_RUN_ID="${TRAIN_RUN_ID:-deepseek-v4-flash-mmlu-dev}"
-EVAL_RUN_ID="${EVAL_RUN_ID:-deepseek-v4-flash-mmlu-test}"
+TRAIN_RUN_ID="${TRAIN_RUN_ID:-deepseek-v4-flash-mmlu-train-test150}"
+EVAL_RUN_ID="${EVAL_RUN_ID:-deepseek-v4-flash-mmlu-eval-gptswarm-val153}"
 WORKERS="${WORKERS:-16}"
 
 assert_under_allowed_root() {
@@ -22,10 +23,11 @@ assert_under_allowed_root() {
 }
 
 assert_under_allowed_root "${PROJECT_ROOT}"
-assert_under_allowed_root "${DATA_ROOT}"
+assert_under_allowed_root "${TRAIN_DATA_ROOT}"
+assert_under_allowed_root "${EVAL_DATA_ROOT}"
 assert_under_allowed_root "${ARTIFACT_ROOT}"
-test -d "${DATA_ROOT}/dev"
-test -d "${DATA_ROOT}/test"
+test -d "${TRAIN_DATA_ROOT}/test"
+test -d "${EVAL_DATA_ROOT}/val"
 
 if [[ -t 0 ]]; then
   read -r -s -p "DeepSeek API key: " API_KEY
@@ -46,8 +48,8 @@ run_with_key() {
 
 train_args=(
   train-mmlu
-  --data-path "${DATA_ROOT}/dev"
-  --split dev
+  --data-path "${TRAIN_DATA_ROOT}/test"
+  --split test
   --artifact-root "${ARTIFACT_ROOT}/training"
   --run-id "${TRAIN_RUN_ID}"
   --resume
@@ -60,8 +62,8 @@ run_with_key "${train_args[@]}"
 eval_args=(
   eval
   --dataset mmlu
-  --data-path "${DATA_ROOT}/test"
-  --split test
+  --data-path "${EVAL_DATA_ROOT}/val"
+  --split val
   --artifact-root "${ARTIFACT_ROOT}/evals"
   --run-id "${EVAL_RUN_ID}"
   --workers "${WORKERS}"

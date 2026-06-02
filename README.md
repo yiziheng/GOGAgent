@@ -68,15 +68,21 @@ Backend manifests store only credential-free settings.
 
 ## MMLU Training And Evaluation
 
-Place the copied MMLU data inside the repository:
+Place the copied MMLU data and budget subsets inside the repository:
 
 ```text
 data/MMLU/
-  dev/
+  val/
   test/
+data/MMLU_subsets/
+  train_test150/test/
+  eval_gptswarm_val153/val/
 ```
 
-Run the complete resumable workflow:
+Run the budgeted resumable workflow. Training uses 150 examples sampled from
+`test`, covering all 57 subjects. Evaluation uses the GPTSwarm-compatible
+subset: concatenate sorted `val` CSV files, shuffle with
+`numpy.default_rng(888)`, then take the first 153 examples.
 
 ```bash
 bash scripts/run_mmlu_full.sh
@@ -86,19 +92,19 @@ Equivalent explicit commands:
 
 ```bash
 python -m gogagent.cli train-mmlu \
-  --data-path data/MMLU/dev \
-  --split dev \
-  --run-id deepseek-v4-flash-mmlu-dev \
+  --data-path data/MMLU_subsets/train_test150/test \
+  --split test \
+  --run-id deepseek-v4-flash-mmlu-train-test150 \
   --api-key-stdin \
   --resume
 
 python -m gogagent.cli eval \
   --dataset mmlu \
-  --data-path data/MMLU/test \
-  --split test \
-  --run-id deepseek-v4-flash-mmlu-test \
+  --data-path data/MMLU_subsets/eval_gptswarm_val153/val \
+  --split val \
+  --run-id deepseek-v4-flash-mmlu-eval-gptswarm-val153 \
   --workers 8 \
-  --gog-memory artifacts/training/deepseek-v4-flash-mmlu-dev/memory.json \
+  --gog-memory artifacts/training/deepseek-v4-flash-mmlu-train-test150/memory.json \
   --api-key-stdin \
   --resume
 ```
