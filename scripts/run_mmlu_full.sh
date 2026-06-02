@@ -40,7 +40,8 @@ run_with_key() {
     --api-key-stdin \
     --base-url "https://api.deepseek.com" \
     --model "deepseek-v4-flash" \
-    --max-tokens 256
+    --max-tokens 256 \
+    --thinking disabled
 }
 
 train_args=(

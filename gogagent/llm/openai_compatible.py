@@ -29,6 +29,7 @@ class OpenAICompatibleLLM(LLMBackend):
         max_retries: int = 2,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking: str | None = None,
     ) -> None:
         self.base_url = _normalize_base_url(base_url)
         self.model = _require_non_empty("model", model)
@@ -41,6 +42,9 @@ class OpenAICompatibleLLM(LLMBackend):
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError("max_tokens must be positive when provided")
         self.max_tokens = max_tokens
+        if thinking not in {None, "enabled", "disabled"}:
+            raise ValueError("thinking must be 'enabled', 'disabled', or None")
+        self.thinking = thinking
 
     def generate(
         self,
@@ -83,6 +87,7 @@ class OpenAICompatibleLLM(LLMBackend):
             "max_retries": self.max_retries,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "thinking": self.thinking,
             "api_key_configured": bool(self._api_key),
         }
 
@@ -106,6 +111,8 @@ class OpenAICompatibleLLM(LLMBackend):
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
+        if self.thinking is not None:
+            payload["thinking"] = {"type": self.thinking}
         return payload
 
     def _post(self, body: bytes) -> Mapping[str, Any]:
@@ -164,6 +171,12 @@ def _parse_response(
         raise RuntimeError("chat completions response is missing message content") from exc
     if not isinstance(text, str):
         raise RuntimeError("chat completions message content must be a string")
+    if not text.strip():
+        finish_reason = choices[0].get("finish_reason")
+        raise RuntimeError(
+            "chat completions response returned empty final content "
+            f"(finish_reason={finish_reason!r})"
+        )
 
     usage = payload.get("usage", {})
     if not isinstance(usage, Mapping):

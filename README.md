@@ -44,6 +44,7 @@ The CLI defaults to:
 ```text
 base URL: https://api.deepseek.com
 model:    deepseek-v4-flash
+thinking: disabled in the server MMLU runner
 ```
 
 Supply credentials only through interactive stdin. Do not save API keys in the

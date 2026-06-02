@@ -90,6 +90,7 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-retries", type=int, default=int(os.environ.get("GOGAGENT_MAX_RETRIES", "2")))
     parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("GOGAGENT_MAX_TOKENS", "1024")))
     parser.add_argument("--temperature", type=float, default=float(os.environ.get("GOGAGENT_TEMPERATURE", "0")))
+    parser.add_argument("--thinking", choices=("enabled", "disabled"), default=None)
     parser.add_argument(
         "--api-key-stdin",
         action="store_true",
@@ -109,6 +110,7 @@ def _backend(args: Any) -> OpenAICompatibleLLM:
         max_retries=args.max_retries,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
+        thinking=args.thinking,
     )
 
 
