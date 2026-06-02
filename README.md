@@ -48,9 +48,37 @@ training code.
 
 ## Environment
 
+The current MVP runtime deliberately uses only the Python standard library.
+The dependency files still install `gogagent` as a package so commands work
+outside the repository root.
+
+### Conda Server Setup
+
 ```bash
+git clone git@github.com:yiziheng/GOGAgent.git
+cd GOGAgent
 conda env create -f environment.yml
 conda activate GOGAgent
+bash scripts/verify_compile.sh
+```
+
+### Pip Server Setup
+
+```bash
+git clone git@github.com:yiziheng/GOGAgent.git
+cd GOGAgent
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+bash scripts/verify_compile.sh
+```
+
+Install the development dependencies when running `pytest`:
+
+```bash
+python -m pip install -r requirements-dev.txt
+pytest
 ```
 
 ## Compile And Smoke Check

@@ -1,0 +1,6 @@
+# Runtime dependencies for server deployment.
+#
+# The current MVP intentionally uses only the Python standard library.
+# Installing the local package still matters: scripts and CLI commands should
+# work outside the repository root instead of relying on an implicit PYTHONPATH.
+-e .

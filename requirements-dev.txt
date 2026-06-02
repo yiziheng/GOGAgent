@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Local verification and future test expansion.
+pytest>=8.0,<9.0

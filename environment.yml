@@ -3,4 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - pip
+  - pip>=23
+  - setuptools>=68
+  - pip:
+      - -e .
