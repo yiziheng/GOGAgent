@@ -78,6 +78,7 @@ class RolloutEngine:
         used_tokens = execution.token_cost
         summary = self.supervisor.summarize(execution, used_tokens, self.token_budget)
         gog.add_snapshot(graph, self.adapter.signature(graph))
+        episode_graph_ids = [graph.graph_id]
         export_snapshot(graph, snapshot_directory)
         _append_trace(
             trace_path,
@@ -132,6 +133,7 @@ class RolloutEngine:
             summary = self.supervisor.summarize(execution, used_tokens, self.token_budget)
             transition = TransitionEdge(previous_graph.graph_id, graph.graph_id, decision.action)
             gog.add_snapshot(graph, self.adapter.signature(graph), transition)
+            episode_graph_ids.append(graph.graph_id)
             export_snapshot(graph, snapshot_directory)
             _append_trace(
                 trace_path,
@@ -144,7 +146,34 @@ class RolloutEngine:
                 },
             )
 
-        export_gog(gog.snapshots.values(), gog.transitions, gog.similarities, directory)
+        episode_id_set = set(episode_graph_ids)
+        episode_snapshots = [gog.snapshots[graph_id] for graph_id in episode_graph_ids]
+        episode_transitions = [
+            transition
+            for transition in gog.transitions
+            if transition.src_graph_id in episode_id_set and transition.dst_graph_id in episode_id_set
+        ]
+        episode_similarities = [
+            similarity
+            for similarity in gog.similarities
+            if similarity.src_graph_id in episode_id_set and similarity.dst_graph_id in episode_id_set
+        ]
+        export_gog(
+            episode_snapshots,
+            episode_transitions,
+            episode_similarities,
+            directory,
+            title="Current Episode Graph-of-Graphs",
+        )
+        if history_snapshot_count:
+            export_gog(
+                tuple(gog.snapshots.values()),
+                gog.transitions,
+                gog.similarities,
+                directory,
+                stem="memory_gog",
+                title="Memory Context Graph-of-Graphs",
+            )
         result = {
             "episode_id": episode_id,
             "domain": self.adapter.name,

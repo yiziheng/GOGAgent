@@ -250,7 +250,6 @@ class MMLUAdapter(DomainAdapter):
                 token_cost += response.total_tokens
             node_outputs[node_id] = output
 
-        answer_source = _answer_tail(graph)
         parsed_options = {
             node_id: _parse_final_option(node_outputs[node_id])
             for node_id, node in nodes.items()
@@ -259,7 +258,7 @@ class MMLUAdapter(DomainAdapter):
         failed_option_nodes = tuple(
             sorted(node_id for node_id, option in parsed_options.items() if option is None)
         )
-        predicted_option = parsed_options[answer_source]
+        answer_source, predicted_option = _select_answer(graph, parsed_options)
         final_output = predicted_option or ""
         checker_present = "option_critic" in nodes
         revised = "rechecker" in nodes
@@ -285,7 +284,7 @@ class MMLUAdapter(DomainAdapter):
             if checker_disagreement or second_opinion_disagreement
             else "none"
         )
-        option_parse_failed = bool(failed_option_nodes)
+        option_parse_failed = predicted_option is None
         confidence = (
             "low"
             if option_parse_failed
@@ -424,6 +423,28 @@ def _answer_tail(graph: OrgGraphSnapshot) -> str:
         if preferred in node_ids:
             return preferred
     raise ValueError("MMLU graph does not contain an answer-producing node")
+
+
+def _select_answer(
+    graph: OrgGraphSnapshot,
+    parsed_options: Mapping[str, str | None],
+) -> tuple[str, str | None]:
+    """Prefer the current answer tail, but fall back to a valid upstream answer.
+
+    A late reviewer can be truncated before emitting ``FINAL`` even when its
+    predecessor already produced a valid option. Treating every older parse
+    miss as unresolved makes the graph keep growing, so policy feedback should
+    focus on whether the final usable answer chain has a single option.
+    """
+
+    preferred_tail = _answer_tail(graph)
+    if parsed_options.get(preferred_tail) is not None:
+        return preferred_tail, parsed_options[preferred_tail]
+    for candidate in ("adjudicator", "rechecker", "resolver", "second_opinion_solver", "solver"):
+        option = parsed_options.get(candidate)
+        if option is not None:
+            return candidate, option
+    return preferred_tail, None
 
 
 def _downstream_from(graph: OrgGraphSnapshot, source: str) -> tuple[str, ...]:

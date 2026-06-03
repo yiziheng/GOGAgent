@@ -40,12 +40,16 @@ def export_gog(
     transitions: Sequence[TransitionEdge],
     similarities: Sequence[SimilarityEdge],
     directory: str | Path,
+    *,
+    stem: str = "gog",
+    title: str = "Organization Graph-of-Graphs",
 ) -> tuple[Path, Path]:
-    """Write the outer Organization GoG as ``gog.json`` and ``gog.svg``."""
+    """Write an Organization GoG view as ``<stem>.json`` and ``<stem>.svg``."""
 
     output_dir = _ensure_directory(directory)
-    json_path = output_dir / "gog.json"
-    svg_path = output_dir / "gog.svg"
+    safe_stem = _safe_filename(stem)
+    json_path = output_dir / f"{safe_stem}.json"
+    svg_path = output_dir / f"{safe_stem}.svg"
     _write_json(
         json_path,
         {
@@ -55,7 +59,8 @@ def export_gog(
         },
     )
     svg_path.write_text(
-        _render_gog_svg(snapshots, transitions, similarities), encoding="utf-8"
+        _render_gog_svg(snapshots, transitions, similarities, title=title),
+        encoding="utf-8",
     )
     return json_path, svg_path
 
@@ -238,6 +243,8 @@ def _render_gog_svg(
     snapshots: Sequence[OrgGraphSnapshot],
     transitions: Sequence[TransitionEdge],
     similarities: Sequence[SimilarityEdge],
+    *,
+    title: str,
 ) -> str:
     levels = {snapshot.graph_id: snapshot.step for snapshot in snapshots}
     positions, width, layout_height = _positions_by_level(
@@ -253,7 +260,7 @@ def _render_gog_svg(
         graph_id: (x, y + title_height) for graph_id, (x, y) in positions.items()
     }
     body = [
-        f'  <text x="{_MARGIN}" y="29" class="title">Organization Graph-of-Graphs</text>',
+        f'  <text x="{_MARGIN}" y="29" class="title">{escape(title)}</text>',
         f'  <text x="{_MARGIN}" y="49" class="detail">{len(snapshots)} graph snapshots | {len(transitions)} edit transitions | {len(similarities)} similarity edges</text>',
     ]
 
