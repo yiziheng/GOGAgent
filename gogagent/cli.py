@@ -31,7 +31,12 @@ def parse_args() -> argparse.Namespace:
     evaluate.add_argument("--start-index", type=int, default=0)
     evaluate.add_argument("--limit", type=int, default=None)
     evaluate.add_argument("--resume", action="store_true")
-    evaluate.add_argument("--gog-memory", type=Path, default=None)
+    evaluate.add_argument(
+        "--policy-checkpoint",
+        type=Path,
+        default=None,
+        help="load a saved torch GNN policy checkpoint for graph construction",
+    )
 
     train = subparsers.add_parser("train-mmlu", help="build GoG memory from an MMLU split")
     _add_backend_arguments(train)
@@ -42,6 +47,21 @@ def parse_args() -> argparse.Namespace:
     train.add_argument("--start-index", type=int, default=0)
     train.add_argument("--limit", type=int, default=None)
     train.add_argument("--resume", action="store_true")
+    train.add_argument(
+        "--policy-checkpoint-in",
+        type=Path,
+        default=None,
+        help="optional initial torch GNN policy checkpoint",
+    )
+    train.add_argument(
+        "--policy-checkpoint-out",
+        type=Path,
+        default=None,
+        help="where to save the trained torch GNN policy; defaults to <run>/policy.pt",
+    )
+    train.add_argument("--policy-learning-rate", type=float, default=0.01)
+    train.add_argument("--policy-gamma", type=float, default=0.9)
+    train.add_argument("--policy-epsilon", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -61,7 +81,7 @@ def main() -> None:
                 start_index=args.start_index,
                 limit=args.limit,
                 resume=args.resume,
-                gog_memory=args.gog_memory,
+                policy_checkpoint=args.policy_checkpoint,
             ),
             backend,
         ).run()
@@ -77,6 +97,11 @@ def main() -> None:
                 start_index=args.start_index,
                 limit=args.limit,
                 resume=args.resume,
+                policy_checkpoint_in=args.policy_checkpoint_in,
+                policy_checkpoint_out=args.policy_checkpoint_out,
+                policy_learning_rate=args.policy_learning_rate,
+                policy_gamma=args.policy_gamma,
+                policy_epsilon=args.policy_epsilon,
             ),
             backend,
         ).run()

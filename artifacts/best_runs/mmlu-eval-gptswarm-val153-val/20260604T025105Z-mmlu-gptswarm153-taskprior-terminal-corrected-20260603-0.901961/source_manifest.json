@@ -1,0 +1,277 @@
+[
+  {
+    "path": "README.md",
+    "sha256": "c9a0a472217a5fe6ac6ba45dc73e40b41c6af8968eb5168e6f8e442b713fd071",
+    "size": 4054
+  },
+  {
+    "path": "environment.yml",
+    "sha256": "df7c9cd7d7ce2e41e6b4feb091e354cb31645fca252ac8f30836c538fe427d1e",
+    "size": 148
+  },
+  {
+    "path": "gogagent/__init__.py",
+    "sha256": "340c8e31df631bd86d175a0a2f1b55abba1a664d4d43ceac166971dbfed562c9",
+    "size": 212
+  },
+  {
+    "path": "gogagent/adapters/__init__.py",
+    "sha256": "4dd94a4971b1978da87b8f2ce3b24c2e252875bff8d1f9255b9c0549a179cf39",
+    "size": 143
+  },
+  {
+    "path": "gogagent/adapters/base.py",
+    "sha256": "594554337beb7e5fd50b0e05f2c64d1104d5525b8b8631f43358794425dbf238",
+    "size": 7614
+  },
+  {
+    "path": "gogagent/adapters/gsm8k.py",
+    "sha256": "d110ff296b5189a14ddfe277cd961206497831c38791fa5de3412e5602bdb29d",
+    "size": 17329
+  },
+  {
+    "path": "gogagent/adapters/humaneval.py",
+    "sha256": "9d00802a43276472f184089255c68d6e5a4d23a99360e98414125a027afbabf9",
+    "size": 17189
+  },
+  {
+    "path": "gogagent/adapters/mmlu.py",
+    "sha256": "1335d830ccbab2669631972d81c6f16c599d503ddea7fa0b58de04c5a8e1ca43",
+    "size": 22412
+  },
+  {
+    "path": "gogagent/adapters/mmlu_subjects.py",
+    "sha256": "9bf5b3c9b34043f6a779fe34d85e53b78e11676a4ff74860b5b1ae01b2f155e2",
+    "size": 2214
+  },
+  {
+    "path": "gogagent/adapters/mmlu_task_encoder.py",
+    "sha256": "9ba89ba8c607258d1be8c22a2757f7b8f4b4be502694aaef0ed3f23863f4897b",
+    "size": 6517
+  },
+  {
+    "path": "gogagent/adapters/registry.py",
+    "sha256": "a45a72f2ed11a4231737c9a49dc103241b92e63af78683d6c0be28f2eb89cca1",
+    "size": 649
+  },
+  {
+    "path": "gogagent/cli.py",
+    "sha256": "4e682f1ae4e11b1af3522b2586fcd9bd08bc673f87489bc83b29b713c0cba650",
+    "size": 5787
+  },
+  {
+    "path": "gogagent/core/__init__.py",
+    "sha256": "9633d51e235fde5fe9a9b51537f96019f0b1477175460160b39616e623104082",
+    "size": 261
+  },
+  {
+    "path": "gogagent/core/actions.py",
+    "sha256": "ec4c338db6d1663bd6f1c5d475c9091ce1656b504b11dbd89244763116d1d97b",
+    "size": 1491
+  },
+  {
+    "path": "gogagent/core/compiler.py",
+    "sha256": "4b848490cdb18b5fcdfaccf827e28469882ab18f6d79508d6b9053d61d14a28e",
+    "size": 1222
+  },
+  {
+    "path": "gogagent/core/constraint_engine.py",
+    "sha256": "108bcf6c535f69ee95bd140d9c4e78c0e03e005d86ffa4a664be561704226c68",
+    "size": 10698
+  },
+  {
+    "path": "gogagent/core/executor.py",
+    "sha256": "c5e472b28c2697b97b563e36995c59d9b14f10c2867c1d02333cadb2b7f983c8",
+    "size": 659
+  },
+  {
+    "path": "gogagent/core/graph_ops.py",
+    "sha256": "ce681a209e4c4062c4305d607ed49bd7322332b7657e18a4d5fa603c17c847cf",
+    "size": 4446
+  },
+  {
+    "path": "gogagent/core/graphagent_library.py",
+    "sha256": "607b526ae157624a412b4a511fe0a67edda585e1167f2c396b09c284ad524221",
+    "size": 7906
+  },
+  {
+    "path": "gogagent/core/rollout.py",
+    "sha256": "05f258c7c411911b8f4c694b35a137c00daeda1ba40df2f86c599d609f7555d4",
+    "size": 10119
+  },
+  {
+    "path": "gogagent/core/supervisor.py",
+    "sha256": "9a5b32152c532d00f0a13695eaff36eecb85abd75ce8020c86017f76f717e525",
+    "size": 1144
+  },
+  {
+    "path": "gogagent/core/types.py",
+    "sha256": "773047ef671aa77b7a6064fa7c3f0466c6e24f2d597fdf9563889cfc776a1680",
+    "size": 6608
+  },
+  {
+    "path": "gogagent/datasets/__init__.py",
+    "sha256": "0e8283babdb734e84a9797c5126db0b9d47cc2526b939b0fcbebddc902038b63",
+    "size": 333
+  },
+  {
+    "path": "gogagent/datasets/loaders.py",
+    "sha256": "a833b0b4cf4b02a989395f732688233b282070356b61cf6c6fa53189ac04982c",
+    "size": 3860
+  },
+  {
+    "path": "gogagent/evaluation/__init__.py",
+    "sha256": "e295bab98ffbab9f93a94ef0753312f714f671ce2f68850be5492397a528a210",
+    "size": 194
+  },
+  {
+    "path": "gogagent/evaluation/runner.py",
+    "sha256": "b417cba12fbcf16bd1665735fb31087047b3dba4220a56768206cea693f1c2b2",
+    "size": 11622
+  },
+  {
+    "path": "gogagent/gog/__init__.py",
+    "sha256": "99c96429fcc75c151d0eb18ba9b415f914d916594e68d9478fb4cf6d074033e4",
+    "size": 129
+  },
+  {
+    "path": "gogagent/gog/memory.py",
+    "sha256": "687b4361a1841bfd7fbeb06f1a1ee3c37f8de25121b63b506e23d1f7117d5e0a",
+    "size": 6188
+  },
+  {
+    "path": "gogagent/gog/visualization.py",
+    "sha256": "50ce15fb405678c189d5717878b1d427aea99b9ee597cfec0c74f7c8a1219c4b",
+    "size": 11104
+  },
+  {
+    "path": "gogagent/llm/__init__.py",
+    "sha256": "a82647ced6cded8bd57801ada868f71c9145cbf89596ff41599694a06a8a2ddb",
+    "size": 214
+  },
+  {
+    "path": "gogagent/llm/base.py",
+    "sha256": "4b267f1971419d8e249978d4590fe4d0f4d7dd4fdb74ba21b2faa7613a96b25e",
+    "size": 941
+  },
+  {
+    "path": "gogagent/llm/openai_compatible.py",
+    "sha256": "280d64990381c46144999280610bbc8ba5c39ae5cc1928ba2c1dcb7c5748e5f6",
+    "size": 7490
+  },
+  {
+    "path": "gogagent/oracle/__init__.py",
+    "sha256": "301f8850a0bceb7fc8128c307f78235f615db28a58213efce5138f02e01fd2a6",
+    "size": 172
+  },
+  {
+    "path": "gogagent/oracle/base.py",
+    "sha256": "a9026b1d30c630a9b42477a0f7d10547be95616b9d7486679ba92bb5fbd065bb",
+    "size": 451
+  },
+  {
+    "path": "gogagent/oracle/gsm8k.py",
+    "sha256": "16965e6570eab038072222b1a3bf5682e5a8d9574b27f0afe760fd09b1f1b4f1",
+    "size": 1907
+  },
+  {
+    "path": "gogagent/oracle/humaneval.py",
+    "sha256": "44cf144e3524bbe496ed7de4a26ff17f948ae2a63858d6b79634aba4d903cf9e",
+    "size": 3637
+  },
+  {
+    "path": "gogagent/oracle/mmlu.py",
+    "sha256": "34c3bdcc0c40237bccf50a5e137c2b3d6ec1901c837c939833a0c0dd1e8d1e9a",
+    "size": 1337
+  },
+  {
+    "path": "gogagent/oracle/registry.py",
+    "sha256": "1dd082d68ccc7f74ad7a742bdb38b8b61429c31115a6ffa0e82577ffaff9b7b4",
+    "size": 741
+  },
+  {
+    "path": "gogagent/policy/__init__.py",
+    "sha256": "668cb77a908b130ec9d4288efbf9a0200f0372cefe7c8bc83fa5117246c0505a",
+    "size": 295
+  },
+  {
+    "path": "gogagent/policy/features.py",
+    "sha256": "2839bade7bb2de57baecb0790d55f3a6875a3a3274c3c0f73f87324aa62654fb",
+    "size": 737
+  },
+  {
+    "path": "gogagent/policy/hierarchical_gnn.py",
+    "sha256": "8a2e4679eff1549d2fde3422d2a11ba7ae350db136384a3023f8e1de92f847a4",
+    "size": 20281
+  },
+  {
+    "path": "gogagent/training/__init__.py",
+    "sha256": "23b210f5426aa1ebcdc1f84b4c7ca26d123888319e62abd08e424b68503efc6e",
+    "size": 374
+  },
+  {
+    "path": "gogagent/training/credit.py",
+    "sha256": "c6ba13e20b45508bcaa031a0dc65a221856fc48f05ec917df13dce5cfc337a8f",
+    "size": 2016
+  },
+  {
+    "path": "gogagent/training/learner.py",
+    "sha256": "81bde78f3bae03b76af8e24b4c8dc8fa9810d1f4b5ca506248f4bfe9d6e82d20",
+    "size": 2538
+  },
+  {
+    "path": "gogagent/training/mmlu_runner.py",
+    "sha256": "74409f745c18eaca6e4c42b868fc11f3b88d2f0ffd43979a7aedc4dece9fcb62",
+    "size": 28510
+  },
+  {
+    "path": "gogagent/training/recorder.py",
+    "sha256": "75ce09c49957ea2707fac79d4c966079865817e4143943d5469a867a60c8206d",
+    "size": 2638
+  },
+  {
+    "path": "gogagent/training/replay.py",
+    "sha256": "060c22b2f7206baf51676254b0d634b5957aea04af8fee23cc7dca7884bdfba9",
+    "size": 4351
+  },
+  {
+    "path": "pyproject.toml",
+    "sha256": "3731d996a5f2af655ef881a7d463c5a220b9a777c0b7769a38f4d2c5b93f532f",
+    "size": 447
+  },
+  {
+    "path": "requirements-dev.txt",
+    "sha256": "501f4cf9df8786bf504eb42aaa2daa07954bb3d406b949c30e032666423d66f9",
+    "size": 86
+  },
+  {
+    "path": "requirements.txt",
+    "sha256": "9c33b1ee188dabc1d7563560a2a8244ab09f5f57390e27620212cdd7d62493af",
+    "size": 21
+  },
+  {
+    "path": "scripts/record_best_run.py",
+    "sha256": "e6bd02d4cef03bb33103f0d453ef5a2e44d49569f7af81e61e24051c8a23e03d",
+    "size": 8835
+  },
+  {
+    "path": "scripts/run_mmlu_full.sh",
+    "sha256": "566139526498a3d90f0437e10ff195e4264e119f803138b4322286029c563f4c",
+    "size": 2830
+  },
+  {
+    "path": "scripts/run_policy_train_eval.sh",
+    "sha256": "2dccd658235bbfa7e2724a4cdbb9105f182a8e2847d6c5b1a9cfc99d58606321",
+    "size": 8048
+  },
+  {
+    "path": "scripts/smoke_contracts.py",
+    "sha256": "db2d93212ebf4cccfa03019e0604c43e109dded4c4a21a93320017d923b1f0ec",
+    "size": 12858
+  },
+  {
+    "path": "scripts/verify_compile.sh",
+    "sha256": "c8da5efe33b23bc288b0f02125326ada2a264e349cbf9558d5cb8ab5807f25b6",
+    "size": 695
+  }
+]

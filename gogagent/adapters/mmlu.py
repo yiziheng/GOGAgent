@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+import math
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
-from gogagent.adapters.base import DomainAdapter
+from gogagent.adapters.base import DomainAdapter, compile_common_module_edit
+from gogagent.adapters.mmlu_subjects import subject_profile
+from gogagent.adapters.mmlu_task_encoder import encode_mmlu_task
 from gogagent.core.actions import MacroAction
 from gogagent.core.graph_ops import default_signature, make_graph_id, topological_order
 from gogagent.core.types import (
@@ -23,6 +26,11 @@ from gogagent.llm.base import LLMBackend
 
 _OPTION_LABELS = ("A", "B", "C", "D")
 _ANSWER_ROLES = {
+    "OptionEliminationGraph",
+    "SecondOpinionDebateGraph",
+    "DecomposeSolveVerifyGraph",
+    "AdversarialBestAnswerGraph",
+    "CritiqueReviseGraph",
     "Solver",
     "Resolver",
     "Rechecker",
@@ -30,73 +38,13 @@ _ANSWER_ROLES = {
     "Adjudicator",
 }
 _REVIEW_ROLES = {"OptionCritic", "Rechecker"}
-
-_SUBJECT_PROFILES = {
-    "stem": {
-        "abstract_algebra",
-        "astronomy",
-        "college_biology",
-        "college_chemistry",
-        "college_computer_science",
-        "college_mathematics",
-        "college_physics",
-        "computer_security",
-        "conceptual_physics",
-        "electrical_engineering",
-        "elementary_mathematics",
-        "high_school_biology",
-        "high_school_chemistry",
-        "high_school_computer_science",
-        "high_school_mathematics",
-        "high_school_physics",
-        "high_school_statistics",
-        "machine_learning",
-    },
-    "humanities": {
-        "business_ethics",
-        "formal_logic",
-        "high_school_european_history",
-        "high_school_us_history",
-        "high_school_world_history",
-        "jurisprudence",
-        "logical_fallacies",
-        "moral_disputes",
-        "moral_scenarios",
-        "philosophy",
-        "prehistory",
-        "world_religions",
-    },
-    "social_sciences": {
-        "econometrics",
-        "global_facts",
-        "high_school_geography",
-        "high_school_government_and_politics",
-        "high_school_macroeconomics",
-        "high_school_microeconomics",
-        "high_school_psychology",
-        "human_sexuality",
-        "public_relations",
-        "security_studies",
-        "sociology",
-        "us_foreign_policy",
-    },
-    "professional": {
-        "anatomy",
-        "clinical_knowledge",
-        "college_medicine",
-        "human_aging",
-        "international_law",
-        "management",
-        "marketing",
-        "medical_genetics",
-        "miscellaneous",
-        "nutrition",
-        "professional_accounting",
-        "professional_law",
-        "professional_medicine",
-        "professional_psychology",
-        "virology",
-    },
+_MODULE_ACTIONS = {
+    MacroAction.ADD_SUBJECT_EXPERT_GRAPH: "SubjectExpertGraph",
+    MacroAction.ADD_OPTION_ELIMINATION_GRAPH: "OptionEliminationGraph",
+    MacroAction.ADD_SECOND_OPINION_DEBATE_GRAPH: "SecondOpinionDebateGraph",
+    MacroAction.ADD_DECOMPOSE_SOLVE_VERIFY_GRAPH: "DecomposeSolveVerifyGraph",
+    MacroAction.ADD_ADVERSARIAL_BEST_ANSWER_GRAPH: "AdversarialBestAnswerGraph",
+    MacroAction.ADD_CRITIQUE_REVISE_GRAPH: "CritiqueReviseGraph",
 }
 
 
@@ -126,14 +74,10 @@ class MMLUAdapter(DomainAdapter):
     def task_features(self, task: Mapping[str, Any]) -> Mapping[str, Any]:
         """Return public, label-blind features only."""
 
-        subject = _public_subject(task)
-        options = _public_options(task)
+        encoded = encode_mmlu_task(task)
         return {
             "dataset": self.name,
-            "subject": subject,
-            "subject_profile": subject_profile(subject),
-            "question_length": len(_public_question(task)),
-            "option_count": len(options),
+            **encoded,
         }
 
     def compile(
@@ -143,6 +87,15 @@ class MMLUAdapter(DomainAdapter):
         feedback: VisibleFeedback,
     ) -> CompiledEdit:
         del feedback
+        common = compile_common_module_edit(
+            graph,
+            action,
+            domain=self.name,
+            module_type=_MODULE_ACTIONS.get(action),
+            fallback_source=_answer_tail(graph),
+        )
+        if common is not None:
+            return common
         profile = str(graph.metadata.get("subject_profile", "general"))
         node_ids = {node.node_id for node in graph.nodes}
 
@@ -260,9 +213,11 @@ class MMLUAdapter(DomainAdapter):
         )
         answer_source, predicted_option = _select_answer(graph, parsed_options)
         final_output = predicted_option or ""
-        checker_present = "option_critic" in nodes
-        revised = "rechecker" in nodes
-        alternative_present = "second_opinion_solver" in nodes
+        checker_present = "option_critic" in nodes or "option_elimination_graph" in nodes
+        revised = "rechecker" in nodes or "critique_revise_graph" in nodes
+        alternative_present = (
+            "second_opinion_solver" in nodes or "second_opinion_debate_graph" in nodes
+        )
         solver_option = parsed_options.get("solver")
         checker_disagreement = (
             checker_present
@@ -270,18 +225,35 @@ class MMLUAdapter(DomainAdapter):
             and predicted_option is not None
             and solver_option != predicted_option
         )
-        second_opinion_option = parsed_options.get("second_opinion_solver")
+        second_opinion_option = parsed_options.get(
+            "second_opinion_debate_graph",
+            parsed_options.get("second_opinion_solver"),
+        )
         second_opinion_disagreement = (
             alternative_present
             and second_opinion_option is not None
             and predicted_option is not None
             and second_opinion_option != predicted_option
         )
+        adversarial_option = parsed_options.get("adversarial_best_answer_graph")
+        adversarial_disagreement = (
+            adversarial_option is not None
+            and predicted_option is not None
+            and adversarial_option != predicted_option
+        )
         disagreement = (
             "high"
-            if checker_disagreement and second_opinion_disagreement
+            if sum(
+                bool(value)
+                for value in (
+                    checker_disagreement,
+                    second_opinion_disagreement,
+                    adversarial_disagreement,
+                )
+            )
+            >= 2
             else "medium"
-            if checker_disagreement or second_opinion_disagreement
+            if checker_disagreement or second_opinion_disagreement or adversarial_disagreement
             else "none"
         )
         option_parse_failed = predicted_option is None
@@ -309,10 +281,27 @@ class MMLUAdapter(DomainAdapter):
                 "answer_source": answer_source,
                 "parsed_options": parsed_options,
                 "option_parse_failed_nodes": failed_option_nodes,
-                "contradiction_count": int(checker_disagreement),
+                "parse_failed_count": len(failed_option_nodes),
+                "final_tail_parse_failed": parsed_options.get(_answer_tail(graph)) is None,
+                "vote_distribution": _vote_distribution(parsed_options),
+                "answer_vote_entropy": _answer_vote_entropy(parsed_options),
+                "majority_margin": _majority_margin(parsed_options),
+                "contradiction_count": sum(
+                    bool(value)
+                    for value in (
+                        checker_disagreement,
+                        second_opinion_disagreement,
+                        adversarial_disagreement,
+                    )
+                ),
+                "answer_module_count": _answer_module_count(parsed_options),
+                "consensus_fraction": _consensus_fraction(parsed_options),
+                "rationale_similarity": _rationale_similarity(graph, node_outputs),
                 "evidence_coverage": _evidence_coverage(graph),
                 "checker_disagreement": checker_disagreement,
                 "second_opinion_disagreement": second_opinion_disagreement,
+                "adversarial_disagreement": adversarial_disagreement,
+                "adversarial_checked": "adversarial_best_answer_graph" in nodes,
                 "answer_changed": bool(previous and previous.final_output != final_output),
                 "subject_profile": profile,
                 "label_blind": True,
@@ -330,17 +319,6 @@ class MMLUAdapter(DomainAdapter):
 
     def signature(self, graph: OrgGraphSnapshot) -> GraphSignature:
         return default_signature(graph)
-
-
-def subject_profile(subject: str) -> str:
-    """Map a public MMLU subject to one coarse, fixed prompt profile."""
-
-    normalized = subject.strip().lower().replace(" ", "_").replace("-", "_")
-    for profile, subjects in _SUBJECT_PROFILES.items():
-        if normalized in subjects:
-            return profile
-    return "general"
-
 
 def _public_question(task: Mapping[str, Any]) -> str:
     return str(task.get("question", task.get("prompt", "")))
@@ -370,6 +348,37 @@ def _node_prompt(role: str, profile: str, question: str, options: Sequence[str])
         f"Question: {question} Options: {option_text}. "
         "Use only the provided question, options, and predecessor outputs."
     )
+    if role == "SubjectExpertGraph":
+        prompt += (
+            " Run the internal subject-router/concept-expert/summarizer graph. "
+            "Return concise concept notes and option risk hints."
+        )
+    elif role == "OptionEliminationGraph":
+        prompt += (
+            " Run concept expert, option elimination, distractor critique, and choice verification. "
+            "Eliminate wrong options before choosing."
+        )
+    elif role == "SecondOpinionDebateGraph":
+        prompt += (
+            " Run two independent option solvers and adjudicate disagreements."
+        )
+    elif role == "DecomposeSolveVerifyGraph":
+        prompt += (
+            " Decompose the question, solve step by step, verify the selected option, "
+            "and prefer the option that survives verification."
+        )
+    elif role == "AdversarialBestAnswerGraph":
+        prompt += (
+            " Do not simply agree with the predecessor answer. Run a premise challenger, "
+            "an option granularity judge, and a best-answer arbitrator. Specifically test "
+            "whether the current answer confuses cause with effect, a broad concept with a "
+            "narrow example, a symptom with a label, or a merely plausible option with the "
+            "best exam answer. Choose the option that survives this adversarial check."
+        )
+    elif role == "CritiqueReviseGraph":
+        prompt += (
+            " Critique the current candidate, revise if needed, and recheck the final choice."
+        )
     if role in _REVIEW_ROLES:
         prompt += " Report a structured review line: ISSUES: <none|comma-separated issue codes>."
     if role in _ANSWER_ROLES:
@@ -410,16 +419,29 @@ def _issue_codes(
 def _evidence_coverage(graph: OrgGraphSnapshot) -> float:
     roles = {node.role for node in graph.nodes}
     coverage = 0.25
-    coverage += 0.2 if "DomainAnalyst" in roles else 0.0
-    coverage += 0.25 if "OptionCritic" in roles else 0.0
-    coverage += 0.2 if "Rechecker" in roles else 0.0
-    coverage += 0.1 if "Adjudicator" in roles else 0.0
+    coverage += 0.2 if "DomainAnalyst" in roles or "SubjectExpertGraph" in roles else 0.0
+    coverage += 0.25 if "OptionCritic" in roles or "OptionEliminationGraph" in roles else 0.0
+    coverage += 0.15 if "DecomposeSolveVerifyGraph" in roles else 0.0
+    coverage += 0.2 if "AdversarialBestAnswerGraph" in roles else 0.0
+    coverage += 0.2 if "Rechecker" in roles or "CritiqueReviseGraph" in roles else 0.0
+    coverage += 0.1 if "Adjudicator" in roles or "SecondOpinionDebateGraph" in roles else 0.0
     return round(min(coverage, 1.0), 6)
 
 
 def _answer_tail(graph: OrgGraphSnapshot) -> str:
     node_ids = {node.node_id for node in graph.nodes}
-    for preferred in ("adjudicator", "rechecker", "resolver", "solver", "second_opinion_solver"):
+    for preferred in (
+        "critique_revise_graph",
+        "adversarial_best_answer_graph",
+        "second_opinion_debate_graph",
+        "decompose_solve_verify_graph",
+        "option_elimination_graph",
+        "adjudicator",
+        "rechecker",
+        "resolver",
+        "solver",
+        "second_opinion_solver",
+    ):
         if preferred in node_ids:
             return preferred
     raise ValueError("MMLU graph does not contain an answer-producing node")
@@ -440,11 +462,102 @@ def _select_answer(
     preferred_tail = _answer_tail(graph)
     if parsed_options.get(preferred_tail) is not None:
         return preferred_tail, parsed_options[preferred_tail]
-    for candidate in ("adjudicator", "rechecker", "resolver", "second_opinion_solver", "solver"):
+    for candidate in (
+        "critique_revise_graph",
+        "adversarial_best_answer_graph",
+        "second_opinion_debate_graph",
+        "decompose_solve_verify_graph",
+        "option_elimination_graph",
+        "adjudicator",
+        "rechecker",
+        "resolver",
+        "second_opinion_solver",
+        "solver",
+    ):
         option = parsed_options.get(candidate)
         if option is not None:
             return candidate, option
     return preferred_tail, None
+
+
+def _answer_module_count(parsed_options: Mapping[str, str | None]) -> int:
+    return sum(1 for option in parsed_options.values() if option is not None)
+
+
+def _vote_distribution(parsed_options: Mapping[str, str | None]) -> dict[str, int]:
+    votes = [option for option in parsed_options.values() if option is not None]
+    return {label: votes.count(label) for label in _OPTION_LABELS}
+
+
+def _answer_vote_entropy(parsed_options: Mapping[str, str | None]) -> float:
+    votes = [option for option in parsed_options.values() if option is not None]
+    if not votes:
+        return 0.0
+    entropy = 0.0
+    for label in _OPTION_LABELS:
+        probability = votes.count(label) / len(votes)
+        if probability:
+            entropy -= probability * math.log(probability, 2)
+    return round(entropy / 2.0, 6)
+
+
+def _majority_margin(parsed_options: Mapping[str, str | None]) -> float:
+    votes = [option for option in parsed_options.values() if option is not None]
+    if len(votes) < 2:
+        return 0.0
+    counts = sorted((votes.count(label) for label in _OPTION_LABELS), reverse=True)
+    return round((counts[0] - counts[1]) / len(votes), 6)
+
+
+def _consensus_fraction(parsed_options: Mapping[str, str | None]) -> float:
+    votes = [option for option in parsed_options.values() if option is not None]
+    if not votes:
+        return 0.0
+    return round(max(votes.count(label) for label in _OPTION_LABELS) / len(votes), 6)
+
+
+def _rationale_similarity(
+    graph: OrgGraphSnapshot,
+    node_outputs: Mapping[str, str],
+) -> float:
+    answer_node_ids = [
+        node.node_id
+        for node in graph.nodes
+        if node.role in _ANSWER_ROLES and node.node_id in node_outputs
+    ]
+    if len(answer_node_ids) < 2:
+        return 0.0
+    tokens = [_content_tokens(node_outputs[node_id]) for node_id in answer_node_ids]
+    pairs = []
+    for left_index, left in enumerate(tokens):
+        for right in tokens[left_index + 1 :]:
+            if not left or not right:
+                continue
+            pairs.append(len(left & right) / len(left | right))
+    if not pairs:
+        return 0.0
+    return round(sum(pairs) / len(pairs), 6)
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z_'-]{2,}", text.lower())
+        if token
+        not in {
+            "the",
+            "and",
+            "for",
+            "that",
+            "this",
+            "with",
+            "final",
+            "option",
+            "answer",
+            "correct",
+            "incorrect",
+        }
+    }
 
 
 def _downstream_from(graph: OrgGraphSnapshot, source: str) -> tuple[str, ...]:

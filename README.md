@@ -8,17 +8,18 @@ Graph-of-Graphs (GoG). The production workflow supports `mmlu`, `gsm8k`, and
 
 ```text
 public benchmark task
-  -> shared typed macro policy
+  -> torch hierarchical GNN/GCN macro policy
   -> domain adapter compiler
   -> executable inner agent DAG snapshot
   -> label-blind feedback + fixed Supervisor
-  -> outer Organization GoG memory
+  -> per-run GoG archive + dense RL replay trace
 ```
 
 Every non-terminal macro edit creates a complete immutable snapshot and an
-`E_edit` edge. Lightweight `E_sim` edges connect structurally similar
-snapshots. The `QScorer` consumes neighbor statistics from persisted GoG
-memory, so prior training experience can change later graph construction.
+`E_edit` edge. Training converts dense, label-blind construction rewards into
+DQN-style updates for the torch GNN policy. Evaluation loads the saved policy
+checkpoint; archived GoG JSON is kept for audit/resume rather than used as a
+separate test-time decision signal.
 
 Gold labels remain outside inference. Dataset loaders return
 `DatasetExample(public_task, gold)`, but `RolloutEngine` receives only
@@ -49,7 +50,7 @@ thinking: disabled in the server MMLU runner
 
 Supply credentials only through interactive stdin. Do not save API keys in the
 repository, command-line arguments, environment variables, shell history,
-`.env`, artifacts, or GoG memory.
+`.env`, or artifacts.
 
 ```bash
 bash scripts/run_mmlu_full.sh
@@ -95,6 +96,7 @@ python -m gogagent.cli train-mmlu \
   --data-path data/MMLU_subsets/train_test150/test \
   --split test \
   --run-id deepseek-v4-flash-mmlu-train-test150 \
+  --policy-checkpoint-out artifacts/policies/deepseek-v4-flash-mmlu-train-test150.pt \
   --api-key-stdin \
   --resume
 
@@ -104,7 +106,7 @@ python -m gogagent.cli eval \
   --split val \
   --run-id deepseek-v4-flash-mmlu-eval-gptswarm-val153 \
   --workers 8 \
-  --gog-memory artifacts/training/deepseek-v4-flash-mmlu-train-test150/memory.json \
+  --policy-checkpoint artifacts/policies/deepseek-v4-flash-mmlu-train-test150.pt \
   --api-key-stdin \
   --resume
 ```
@@ -114,6 +116,7 @@ Results are written incrementally:
 ```text
 artifacts/training/<run-id>/
   memory.json
+  policy.pt
   train_summary.json
 
 artifacts/evals/<run-id>/

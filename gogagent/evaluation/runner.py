@@ -23,8 +23,8 @@ from gogagent.datasets import (
     load_humaneval_jsonl,
     load_mmlu_directory,
 )
-from gogagent.gog.memory import OrganizationGoG
 from gogagent.llm.base import LLMBackend
+from gogagent.policy.hierarchical_gnn import HierarchicalGNNPolicy
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class EvaluationConfig:
     start_index: int = 0
     limit: int | None = None
     resume: bool = False
-    gog_memory: Path | None = None
+    policy_checkpoint: Path | None = None
 
 
 class BenchmarkRunner:
@@ -52,6 +52,14 @@ class BenchmarkRunner:
         self.run_directory = config.artifact_root / config.run_id
         self.items_directory = self.run_directory / "items"
         self._event_lock = Lock()
+        self.policy = (
+            HierarchicalGNNPolicy.load(str(config.policy_checkpoint))
+            if config.policy_checkpoint is not None
+            else None
+        )
+        if self.policy is not None:
+            self.policy.epsilon = 0.0
+            self.policy.eval()
 
     def run(self) -> dict[str, Any]:
         self.items_directory.mkdir(parents=True, exist_ok=True)
@@ -62,6 +70,11 @@ class BenchmarkRunner:
                 "created_at": _now(),
                 "config": _config_dict(self.config),
                 "backend": self.backend.describe(),
+                "policy_checkpoint": (
+                    str(self.config.policy_checkpoint)
+                    if self.config.policy_checkpoint is not None
+                    else None
+                ),
                 "label_boundary": "gold is scored only after RolloutEngine.run(public_task)",
             },
         )
@@ -101,12 +114,11 @@ class BenchmarkRunner:
         self._append_event("running", task_id, item_directory)
         _reset_rollout_directory(item_directory / "rollout")
         try:
-            memory = OrganizationGoG.load(self.config.gog_memory) if self.config.gog_memory else None
             rollout = RolloutEngine(
                 get_adapter(example.dataset),
                 self.backend,
                 artifact_root=self.run_directory / "rollouts",
-                gog_memory=memory,
+                policy=self.policy,
             ).run(
                 example.public_task,
                 episode_id=item_directory.name,

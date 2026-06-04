@@ -17,10 +17,30 @@ class NodeSpec:
     role: str
     runner: str = "openai_compatible"
     profile: str = ""
+    node_kind: str = "atomic"
+    module_type: str = ""
+    model_tier: str = "standard"
+    input_ports: tuple[str, ...] = ()
+    output_ports: tuple[str, ...] = ()
+    internal_nodes: tuple["NodeSpec", ...] = ()
+    internal_edges: tuple["EdgeSpec", ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> JsonMap:
-        return asdict(self)
+        return {
+            "node_id": self.node_id,
+            "role": self.role,
+            "runner": self.runner,
+            "profile": self.profile,
+            "node_kind": self.node_kind,
+            "module_type": self.module_type,
+            "model_tier": self.model_tier,
+            "input_ports": list(self.input_ports),
+            "output_ports": list(self.output_ports),
+            "internal_nodes": [node.to_dict() for node in self.internal_nodes],
+            "internal_edges": [edge.to_dict() for edge in self.internal_edges],
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -28,9 +48,17 @@ class EdgeSpec:
     src: str
     dst: str
     payload: str = "default"
+    edge_kind: str = "exec"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> JsonMap:
-        return asdict(self)
+        return {
+            "src": self.src,
+            "dst": self.dst,
+            "payload": self.payload,
+            "edge_kind": self.edge_kind,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -40,17 +68,22 @@ class GraphSignature:
     edge_count: int
     depth: int
     payload_modes: tuple[str, ...]
+    graph_agent_count: int = 0
+    atomic_agent_count: int = 0
+    module_types: tuple[str, ...] = ()
+    max_graphagent_internal_nodes: int = 0
 
     def to_dict(self) -> JsonMap:
         data = asdict(self)
         data["roles"] = list(self.roles)
         data["payload_modes"] = list(self.payload_modes)
+        data["module_types"] = list(self.module_types)
         return data
 
 
 @dataclass(frozen=True)
 class OrgGraphSnapshot:
-    """An immutable inner executable DAG stored as one outer GoG node."""
+    """An immutable hierarchical executable GoG for one task episode."""
 
     graph_id: str
     domain: str
@@ -131,8 +164,11 @@ class ExecutionResult:
 
 @dataclass(frozen=True)
 class CompiledEdit:
-    added_nodes: tuple[NodeSpec, ...]
-    added_edges: tuple[EdgeSpec, ...]
+    added_nodes: tuple[NodeSpec, ...] = ()
+    added_edges: tuple[EdgeSpec, ...] = ()
+    removed_nodes: tuple[str, ...] = ()
+    removed_edges: tuple[EdgeSpec, ...] = ()
+    updated_nodes: tuple[NodeSpec, ...] = ()
     invalidated_nodes: tuple[str, ...] = ()
     reusable_cache_keys: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -142,9 +178,14 @@ class CompiledEdit:
 class MacroCandidate:
     action: MacroAction
     reason: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> JsonMap:
-        return {"action": self.action.value, "reason": self.reason}
+        return {
+            "action": self.action.value,
+            "reason": self.reason,
+            "parameters": dict(self.parameters),
+        }
 
 
 @dataclass(frozen=True)
@@ -159,16 +200,6 @@ class TransitionEdge:
             "dst_graph_id": self.dst_graph_id,
             "action": self.action.value,
         }
-
-
-@dataclass(frozen=True)
-class SimilarityEdge:
-    src_graph_id: str
-    dst_graph_id: str
-    similarity: float
-
-    def to_dict(self) -> JsonMap:
-        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -193,10 +224,12 @@ class PolicyDecision:
     action: MacroAction
     scores: Mapping[str, float]
     candidates: Sequence[MacroCandidate]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> JsonMap:
         return {
             "action": self.action.value,
             "scores": dict(self.scores),
             "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "metadata": dict(self.metadata),
         }

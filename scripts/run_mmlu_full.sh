@@ -8,6 +8,7 @@ EVAL_DATA_ROOT="${EVAL_DATA_ROOT:-${PROJECT_ROOT}/data/MMLU_subsets/eval_gptswar
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-${PROJECT_ROOT}/artifacts}"
 TRAIN_RUN_ID="${TRAIN_RUN_ID:-deepseek-v4-flash-mmlu-train-test150}"
 EVAL_RUN_ID="${EVAL_RUN_ID:-deepseek-v4-flash-mmlu-eval-gptswarm-val153}"
+POLICY_CHECKPOINT="${POLICY_CHECKPOINT:-${ARTIFACT_ROOT}/policies/${TRAIN_RUN_ID}.pt}"
 WORKERS="${WORKERS:-16}"
 
 assert_under_allowed_root() {
@@ -52,6 +53,7 @@ train_args=(
   --split test
   --artifact-root "${ARTIFACT_ROOT}/training"
   --run-id "${TRAIN_RUN_ID}"
+  --policy-checkpoint-out "${POLICY_CHECKPOINT}"
   --resume
 )
 if [[ -n "${TRAIN_LIMIT:-}" ]]; then
@@ -67,12 +69,30 @@ eval_args=(
   --artifact-root "${ARTIFACT_ROOT}/evals"
   --run-id "${EVAL_RUN_ID}"
   --workers "${WORKERS}"
-  --gog-memory "${ARTIFACT_ROOT}/training/${TRAIN_RUN_ID}/memory.json"
+  --policy-checkpoint "${POLICY_CHECKPOINT}"
   --resume
 )
 if [[ -n "${EVAL_LIMIT:-}" ]]; then
   eval_args+=(--limit "${EVAL_LIMIT}")
 fi
 run_with_key "${eval_args[@]}"
+
+SUMMARY_PATH="${ARTIFACT_ROOT}/evals/${EVAL_RUN_ID}/summary.json"
+if [[ -f "scripts/record_best_run.py" && -f "${SUMMARY_PATH}" ]]; then
+  python scripts/record_best_run.py \
+    --summary "${SUMMARY_PATH}" \
+    --dataset mmlu \
+    --eval-data "${EVAL_DATA_ROOT}/val" \
+    --eval-split val \
+    --eval-run-id "${EVAL_RUN_ID}" \
+    --policy-checkpoint "${POLICY_CHECKPOINT}" \
+    --train-run-id "${TRAIN_RUN_ID}" \
+    --train-data "${TRAIN_DATA_ROOT}/test" \
+    --registry-dir "${ARTIFACT_ROOT}/best_runs" \
+    --model deepseek-v4-flash \
+    --base-url https://api.deepseek.com \
+    --max-tokens 256 \
+    --thinking disabled
+fi
 
 unset API_KEY

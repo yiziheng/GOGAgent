@@ -8,7 +8,7 @@ from hashlib import sha256
 import json
 from typing import Any, Mapping
 
-from gogagent.adapters.base import DomainAdapter
+from gogagent.adapters.base import DomainAdapter, compile_common_module_edit
 from gogagent.core.actions import MacroAction
 from gogagent.core.types import (
     CompiledEdit,
@@ -33,7 +33,13 @@ _NEGATED_CHECKER_ISSUE_RE = re.compile(
     r"(?:bugs?|defects?|errors?|failures?|incorrect|issues?|mistakes?|wrong)\b",
     re.IGNORECASE,
 )
-_CHECKER_ROLES = {"CodeChecker", "Rechecker"}
+_CHECKER_ROLES = {"CodeChecker", "Rechecker", "TestDebugRetestGraph", "CritiqueReviseGraph"}
+_MODULE_ACTIONS = {
+    MacroAction.ADD_SPEC_ANALYZE_CODE_GRAPH: "SpecAnalyzeCodeGraph",
+    MacroAction.ADD_TEST_DEBUG_RETEST_GRAPH: "TestDebugRetestGraph",
+    MacroAction.ADD_ALTERNATIVE_IMPLEMENTATION_GRAPH: "AlternativeImplementationGraph",
+    MacroAction.ADD_CRITIQUE_REVISE_GRAPH: "CritiqueReviseGraph",
+}
 _ROLE_TO_NODE_ID = {
     "Solver": "solver",
     "CodePlanner": "code_planner",
@@ -80,6 +86,15 @@ class HumanEvalAdapter(DomainAdapter):
         feedback: VisibleFeedback,
     ) -> CompiledEdit:
         del feedback  # Macro expansion is deterministic and label-blind.
+        common = compile_common_module_edit(
+            graph,
+            action,
+            domain=self.name,
+            module_type=_MODULE_ACTIONS.get(action),
+            fallback_source=_preferred_code_node(graph),
+        )
+        if common is not None:
+            return common
         roles = {node.role for node in graph.nodes}
 
         if action is MacroAction.STOP:
@@ -174,7 +189,7 @@ class HumanEvalAdapter(DomainAdapter):
             outputs[node.node_id] = output
 
         roles = {node.role for node in graph.nodes}
-        final_node = _final_output_node(roles)
+        final_node = _final_output_node(roles, graph)
         feedback = _visible_feedback(graph, final_node, outputs, llm_calls)
         return ExecutionResult(
             graph_id=graph.graph_id,
@@ -260,12 +275,31 @@ def _ensure_present(roles: set[str], *required_present: str) -> None:
 
 def _preferred_code_node(graph: OrgGraphSnapshot) -> str:
     roles = {node.role for node in graph.nodes}
+    role_to_node = {node.role: node.node_id for node in graph.nodes}
+    for role in (
+        "AlternativeImplementationGraph",
+        "TestDebugRetestGraph",
+        "CritiqueReviseGraph",
+        "SpecAnalyzeCodeGraph",
+    ):
+        if role in role_to_node:
+            return role_to_node[role]
     if "CodeReviser" in roles:
         return _ROLE_TO_NODE_ID["CodeReviser"]
     return _ROLE_TO_NODE_ID["Solver"]
 
 
-def _final_output_node(roles: set[str]) -> str:
+def _final_output_node(roles: set[str], graph: OrgGraphSnapshot | None = None) -> str:
+    if graph is not None:
+        role_to_node = {node.role: node.node_id for node in graph.nodes}
+        for role in (
+            "AlternativeImplementationGraph",
+            "TestDebugRetestGraph",
+            "CritiqueReviseGraph",
+            "SpecAnalyzeCodeGraph",
+        ):
+            if role in role_to_node:
+                return role_to_node[role]
     if "Adjudicator" in roles:
         return _ROLE_TO_NODE_ID["Adjudicator"]
     if "CodeReviser" in roles:
@@ -345,7 +379,7 @@ def _visible_feedback(
         for node in graph.nodes
         if node.role in _CHECKER_ROLES and _checker_reports_issue(outputs[node.node_id])
     )
-    has_checker = "CodeChecker" in roles
+    has_checker = "CodeChecker" in roles or "TestDebugRetestGraph" in roles
 
     issues: list[str] = []
     if not code_extractable:
@@ -370,11 +404,11 @@ def _visible_feedback(
         disagreement_level="medium" if checker_issue_nodes else "none",
         issue_codes=tuple(issues),
         signals={
-            "has_plan": "CodePlanner" in roles,
+            "has_plan": "CodePlanner" in roles or "SpecAnalyzeCodeGraph" in roles,
             "has_checker": has_checker,
-            "has_revision": "CodeReviser" in roles,
-            "has_rechecker": "Rechecker" in roles,
-            "has_alternative": "Adjudicator" in roles,
+            "has_revision": "CodeReviser" in roles or "TestDebugRetestGraph" in roles or "CritiqueReviseGraph" in roles,
+            "has_rechecker": "Rechecker" in roles or "TestDebugRetestGraph" in roles,
+            "has_alternative": "Adjudicator" in roles or "AlternativeImplementationGraph" in roles,
             "answer_source": answer_source,
             "code_extractable": code_extractable,
             "python_compile_ok": python_compile_ok,
@@ -412,6 +446,10 @@ def _checker_reports_issue(text: str) -> bool:
 def _role_prompt(role: str, task_prompt: str) -> str:
     instructions = {
         "Solver": "Write a concise Python implementation for the HumanEval task. Return only the complete implementation fenced as ```python ... ```.",
+        "SpecAnalyzeCodeGraph": "Run spec analysis, code synthesis, and static review. Return only the strongest complete implementation fenced as ```python ... ```.",
+        "TestDebugRetestGraph": "Inspect the candidate code, localize likely failures, debug, and retest mentally. Return only the improved implementation fenced as ```python ... ```.",
+        "AlternativeImplementationGraph": "Produce two independent implementations, adjudicate, and return only the strongest implementation fenced as ```python ... ```.",
+        "CritiqueReviseGraph": "Critique the candidate code, revise, and recheck. Return only the improved implementation fenced as ```python ... ```.",
         "CodePlanner": "Outline a concise implementation plan and edge cases.",
         "CodeChecker": "Review the candidate implementation for likely defects.",
         "CodeReviser": "Return an improved complete Python implementation using the review. Return only the implementation fenced as ```python ... ```.",

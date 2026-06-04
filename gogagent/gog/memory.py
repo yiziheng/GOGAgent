@@ -1,11 +1,10 @@
-"""Persistent outer Graph-of-Graphs state and neighbor statistics."""
+"""Persistent Graph-of-Graphs archive for training traces."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 import json
 from pathlib import Path
-from statistics import mean
 from typing import Any
 
 from gogagent.core.actions import MacroAction
@@ -15,21 +14,17 @@ from gogagent.core.types import (
     GraphSignature,
     NodeSpec,
     OrgGraphSnapshot,
-    SimilarityEdge,
     TransitionEdge,
 )
-from gogagent.gog.similarity import signature_similarity
 
 
 class OrganizationGoG:
-    """Store inner DAG snapshots as outer nodes and make neighbors policy-visible."""
+    """Store generated DAG snapshots and edit transitions for audit/training."""
 
-    def __init__(self, top_k: int = 3) -> None:
-        self.top_k = top_k
+    def __init__(self) -> None:
         self.snapshots: dict[str, OrgGraphSnapshot] = {}
         self.signatures: dict[str, GraphSignature] = {}
         self.transitions: list[TransitionEdge] = []
-        self.similarities: list[SimilarityEdge] = []
         self.experiences: list[ExperienceRecord] = []
 
     def add_snapshot(
@@ -42,7 +37,6 @@ class OrganizationGoG:
         self.signatures[snapshot.graph_id] = signature
         if transition is not None:
             self.transitions.append(transition)
-        self._refresh_similarity_edges()
 
     def add_experience(self, experience: ExperienceRecord) -> None:
         self.experiences.append(experience)
@@ -50,11 +44,10 @@ class OrganizationGoG:
     def fork_for_rollout(self) -> OrganizationGoG:
         """Return a mutable episode view while leaving frozen training memory intact."""
 
-        fork = OrganizationGoG(self.top_k)
+        fork = OrganizationGoG()
         fork.snapshots = dict(self.snapshots)
         fork.signatures = dict(self.signatures)
         fork.transitions = list(self.transitions)
-        fork.similarities = list(self.similarities)
         fork.experiences = list(self.experiences)
         return fork
 
@@ -74,7 +67,7 @@ class OrganizationGoG:
         """Load training memory for read-only rollout seeding."""
 
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        memory = cls(top_k=int(payload.get("top_k", 3)))
+        memory = cls()
         memory.snapshots = {
             item["graph_id"]: _snapshot_from_dict(item)
             for item in payload.get("snapshots", ())
@@ -90,14 +83,6 @@ class OrganizationGoG:
                 action=MacroAction(item["action"]),
             )
             for item in payload.get("transitions", ())
-        ]
-        memory.similarities = [
-            SimilarityEdge(
-                src_graph_id=item["src_graph_id"],
-                dst_graph_id=item["dst_graph_id"],
-                similarity=float(item["similarity"]),
-            )
-            for item in payload.get("similarities", ())
         ]
         memory.experiences = [
             ExperienceRecord(
@@ -118,52 +103,14 @@ class OrganizationGoG:
         """Return a replayable, label-free memory checkpoint."""
 
         return {
-            "top_k": self.top_k,
             "snapshots": [snapshot.to_dict() for snapshot in self.snapshots.values()],
             "signatures": {
                 graph_id: signature.to_dict()
                 for graph_id, signature in self.signatures.items()
             },
             "transitions": [transition.to_dict() for transition in self.transitions],
-            "similarities": [edge.to_dict() for edge in self.similarities],
             "experiences": [experience.to_dict() for experience in self.experiences],
         }
-
-    def similar_neighbors(self, graph_id: str) -> tuple[SimilarityEdge, ...]:
-        edges = [
-            edge
-            for edge in self.similarities
-            if edge.src_graph_id == graph_id or edge.dst_graph_id == graph_id
-        ]
-        return tuple(sorted(edges, key=lambda edge: edge.similarity, reverse=True)[: self.top_k])
-
-    def neighbor_stats(self, graph_id: str, action: MacroAction) -> dict[str, float]:
-        neighbor_ids = {graph_id}
-        for edge in self.similar_neighbors(graph_id):
-            neighbor_ids.add(edge.src_graph_id)
-            neighbor_ids.add(edge.dst_graph_id)
-        matching = [
-            item for item in self.experiences if item.graph_id in neighbor_ids and item.action is action
-        ]
-        if not matching:
-            return {"mean_return": 0.0, "success_rate": 0.0, "count": 0.0}
-        return {
-            "mean_return": mean(item.return_value for item in matching),
-            "success_rate": mean(float(item.success) for item in matching),
-            "count": float(len(matching)),
-        }
-
-    def _refresh_similarity_edges(self) -> None:
-        graph_ids = sorted(self.snapshots)
-        edges: list[SimilarityEdge] = []
-        for index, src in enumerate(graph_ids):
-            scored = []
-            for dst in graph_ids[index + 1 :]:
-                score = signature_similarity(self.signatures[src], self.signatures[dst])
-                if score > 0:
-                    scored.append(SimilarityEdge(src, dst, score))
-            edges.extend(sorted(scored, key=lambda edge: edge.similarity, reverse=True)[: self.top_k])
-        self.similarities = edges
 
 
 def _snapshot_from_dict(data: dict[str, Any]) -> OrgGraphSnapshot:
@@ -172,20 +119,8 @@ def _snapshot_from_dict(data: dict[str, Any]) -> OrgGraphSnapshot:
         graph_id=data["graph_id"],
         domain=data["domain"],
         step=int(data["step"]),
-        nodes=tuple(
-            NodeSpec(
-                node_id=node["node_id"],
-                role=node["role"],
-                runner=node.get("runner", "openai_compatible"),
-                profile=node.get("profile", ""),
-                metadata=node.get("metadata", {}),
-            )
-            for node in data.get("nodes", ())
-        ),
-        edges=tuple(
-            EdgeSpec(src=edge["src"], dst=edge["dst"], payload=edge.get("payload", "default"))
-            for edge in data.get("edges", ())
-        ),
+        nodes=tuple(_node_from_dict(node) for node in data.get("nodes", ())),
+        edges=tuple(_edge_from_dict(edge) for edge in data.get("edges", ())),
         parent_graph_id=data.get("parent_graph_id"),
         created_by=MacroAction(created_by) if created_by else None,
         metadata=data.get("metadata", {}),
@@ -199,4 +134,35 @@ def _signature_from_dict(data: dict[str, Any]) -> GraphSignature:
         edge_count=int(data["edge_count"]),
         depth=int(data["depth"]),
         payload_modes=tuple(data.get("payload_modes", ())),
+        graph_agent_count=int(data.get("graph_agent_count", 0)),
+        atomic_agent_count=int(data.get("atomic_agent_count", 0)),
+        module_types=tuple(data.get("module_types", ())),
+        max_graphagent_internal_nodes=int(data.get("max_graphagent_internal_nodes", 0)),
+    )
+
+
+def _node_from_dict(node: dict[str, Any]) -> NodeSpec:
+    return NodeSpec(
+        node_id=node["node_id"],
+        role=node["role"],
+        runner=node.get("runner", "openai_compatible"),
+        profile=node.get("profile", ""),
+        node_kind=node.get("node_kind", node.get("node_type", "atomic")),
+        module_type=node.get("module_type", ""),
+        model_tier=node.get("model_tier", "standard"),
+        input_ports=tuple(node.get("input_ports", ())),
+        output_ports=tuple(node.get("output_ports", ())),
+        internal_nodes=tuple(_node_from_dict(child) for child in node.get("internal_nodes", ())),
+        internal_edges=tuple(_edge_from_dict(edge) for edge in node.get("internal_edges", ())),
+        metadata=node.get("metadata", {}),
+    )
+
+
+def _edge_from_dict(edge: dict[str, Any]) -> EdgeSpec:
+    return EdgeSpec(
+        src=edge["src"],
+        dst=edge["dst"],
+        payload=edge.get("payload", "default"),
+        edge_kind=edge.get("edge_kind", "exec"),
+        metadata=edge.get("metadata", {}),
     )

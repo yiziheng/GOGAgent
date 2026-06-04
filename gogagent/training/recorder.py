@@ -32,7 +32,7 @@ class TrainingSummary:
 
 
 class TrainingEpisodeRecorder:
-    """Score one episode and persist per-edit experiences for QScorer neighbors."""
+    """Score one episode and persist per-edit credit records for audit."""
 
     def __init__(
         self,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -20,8 +20,11 @@ from gogagent.datasets import DatasetExample, load_mmlu_directory
 from gogagent.gog.memory import OrganizationGoG
 from gogagent.llm.base import LLMBackend
 from gogagent.oracle.registry import get_oracle
+from gogagent.policy.hierarchical_gnn import HierarchicalGNNPolicy
 from gogagent.training.credit import TransitionCreditInput
+from gogagent.training.learner import DQNStyleLearner
 from gogagent.training.recorder import TrainingEpisodeRecorder
+from gogagent.training.replay import DenseRewardBreakdown, ReplayTransition
 
 
 _STATUS_VALUES = {
@@ -44,8 +47,12 @@ class MMLUTrainingConfig:
     start_index: int = 0
     limit: int | None = None
     resume: bool = False
-    gog_memory: Path | None = None
     token_budget: int = 4096
+    policy_checkpoint_in: Path | None = None
+    policy_checkpoint_out: Path | None = None
+    policy_learning_rate: float = 0.01
+    policy_gamma: float = 0.9
+    policy_epsilon: float = 0.05
 
 
 class MMLUMemoryTrainer:
@@ -58,6 +65,12 @@ class MMLUMemoryTrainer:
             raise ValueError("limit must be non-negative")
         if config.token_budget <= 0:
             raise ValueError("token_budget must be positive")
+        if config.policy_learning_rate <= 0.0:
+            raise ValueError("policy_learning_rate must be positive")
+        if not 0.0 <= config.policy_gamma <= 1.0:
+            raise ValueError("policy_gamma must be between 0 and 1")
+        if not 0.0 <= config.policy_epsilon <= 1.0:
+            raise ValueError("policy_epsilon must be between 0 and 1")
         self.config = config
         self.backend = backend
         self.adapter = MMLUAdapter()
@@ -65,7 +78,14 @@ class MMLUMemoryTrainer:
         self.run_directory = config.artifact_root / config.run_id
         self.items_directory = self.run_directory / "items"
         self.memory_path = self.run_directory / "memory.json"
+        self.policy_path = config.policy_checkpoint_out or (self.run_directory / "policy.pt")
         self.gog = OrganizationGoG()
+        self.policy = HierarchicalGNNPolicy(epsilon=config.policy_epsilon)
+        self.learner = DQNStyleLearner(
+            self.policy,
+            gamma=config.policy_gamma,
+            learning_rate=config.policy_learning_rate,
+        )
 
     def run(self) -> dict[str, Any]:
         self._prepare_run()
@@ -76,6 +96,7 @@ class MMLUMemoryTrainer:
                 "updated_at": _now(),
                 "config": _config_dict(self.config),
                 "backend": dict(self.backend.describe()),
+                "policy_checkpoint": str(self.policy_path),
                 "label_boundary": (
                     "RolloutEngine.run receives public_task only; gold enters "
                     "TrainingEpisodeRecorder.record only after rollout returns"
@@ -98,7 +119,14 @@ class MMLUMemoryTrainer:
             completed.append(self._run_one(example, item_directory))
 
         records = skipped + completed
-        summary = _summarize(records, len(skipped), self.gog, self.memory_path)
+        _save_policy(self.policy, self.policy_path)
+        summary = _summarize(
+            records,
+            len(skipped),
+            self.gog,
+            self.memory_path,
+            self.policy_path,
+        )
         _write_json(self.run_directory / "train_summary.json", summary)
         return summary
 
@@ -112,17 +140,34 @@ class MMLUMemoryTrainer:
         self.items_directory.mkdir(parents=True, exist_ok=True)
         if self.config.resume and self.memory_path.exists():
             self.gog = OrganizationGoG.load(self.memory_path)
-            return
-        if self.config.resume and _has_completed_items(self.items_directory):
+        elif self.config.resume and _has_completed_items(self.items_directory):
             raise FileNotFoundError(
                 f"cannot resume completed items without checkpoint: {self.memory_path}"
             )
-        self.gog = (
-            OrganizationGoG.load(self.config.gog_memory)
-            if self.config.gog_memory is not None
-            else OrganizationGoG()
+        else:
+            self.gog = OrganizationGoG()
+            _save_memory(self.gog, self.memory_path)
+        self.policy = self._load_policy()
+        self.learner = DQNStyleLearner(
+            self.policy,
+            gamma=self.config.policy_gamma,
+            learning_rate=self.config.policy_learning_rate,
         )
-        _save_memory(self.gog, self.memory_path)
+        _save_policy(self.policy, self.policy_path)
+
+    def _load_policy(self) -> HierarchicalGNNPolicy:
+        if self.config.policy_checkpoint_in is not None:
+            policy = HierarchicalGNNPolicy.load(str(self.config.policy_checkpoint_in))
+        elif self.config.resume and self.policy_path.exists():
+            policy = HierarchicalGNNPolicy.load(str(self.policy_path))
+        elif self.config.resume and _has_completed_items(self.items_directory):
+            raise FileNotFoundError(
+                f"cannot resume completed items without policy checkpoint: {self.policy_path}"
+            )
+        else:
+            policy = HierarchicalGNNPolicy(epsilon=self.config.policy_epsilon)
+        policy.epsilon = self.config.policy_epsilon
+        return policy
 
     def _run_one(
         self,
@@ -140,7 +185,8 @@ class MMLUMemoryTrainer:
                 self.adapter,
                 self.backend,
                 artifact_root=self.run_directory / "rollouts",
-                gog_memory=self.gog,
+                gog_archive=self.gog,
+                policy=self.policy,
                 token_budget=self.config.token_budget,
             ).run(
                 example.public_task,
@@ -160,8 +206,13 @@ class MMLUMemoryTrainer:
                 gold=example.gold,
                 steps=steps,
             )
+            policy_updates = self._train_policy_from_trace(
+                trace,
+                terminal_reward=training.terminal_reward,
+            )
             _save_memory(updated_gog, self.memory_path)
             self.gog = updated_gog
+            _save_policy(self.policy, self.policy_path)
             result = {
                 "status": "completed",
                 "dataset": "mmlu",
@@ -174,6 +225,11 @@ class MMLUMemoryTrainer:
                 "terminal_reward": training.terminal_reward,
                 "correct": training.terminal_reward > 0.0,
                 "credit_count": training.experience_count,
+                "policy_update_count": len(policy_updates),
+                "policy_loss_mean": _mean(
+                    update.loss for update in policy_updates
+                ),
+                "policy_checkpoint": str(self.policy_path),
                 "memory_experience_count": len(self.gog.experiences),
                 "elapsed_seconds": round(monotonic() - started, 6),
                 "used_tokens": rollout["used_tokens"],
@@ -203,6 +259,57 @@ class MMLUMemoryTrainer:
             _write_status(item_directory, "failed", task_id=task_id)
             self._append_event("failed", task_id, item_directory, error=str(error))
             return result
+
+    def _train_policy_from_trace(
+        self,
+        trace: list[dict[str, Any]],
+        *,
+        terminal_reward: float,
+    ) -> list[Any]:
+        snapshots = {
+            snapshot.graph_id: snapshot
+            for snapshot in (
+                _snapshot_from_dict(_mapping(record, "graph"))
+                for record in trace
+                if record.get("event") == "snapshot"
+            )
+        }
+        updates = []
+        transitions = _replay_transitions_from_trace(trace)
+        total = len(transitions)
+        for index, transition in enumerate(transitions):
+            graph = snapshots.get(transition.graph_id)
+            next_graph = snapshots.get(transition.next_graph_id)
+            if graph is None or next_graph is None:
+                continue
+            shaped_transition = replace(
+                transition,
+                reward=round(
+                    transition.reward
+                    + _terminal_action_bonus(terminal_reward, index, total),
+                    6,
+                ),
+                done=index == total - 1,
+            )
+            updates.append(
+                self.learner.train_one(
+                    graph=graph,
+                    next_graph=next_graph,
+                    transition=shaped_transition,
+                )
+            )
+        stop_transition = _stop_transition_from_trace(trace, terminal_reward)
+        if stop_transition is not None:
+            graph = snapshots.get(stop_transition.graph_id)
+            if graph is not None:
+                updates.append(
+                    self.learner.train_one(
+                        graph=graph,
+                        next_graph=graph,
+                        transition=stop_transition,
+                    )
+                )
+        return updates
 
     def _selected_examples(self) -> Iterable[DatasetExample]:
         examples = list(load_mmlu_directory(self.config.data_path, split=self.config.split))
@@ -298,6 +405,118 @@ def _visible_delta(
     return round(successor - source, 6)
 
 
+def _replay_transitions_from_trace(trace: list[dict[str, Any]]) -> tuple[ReplayTransition, ...]:
+    transitions: list[ReplayTransition] = []
+    for record in trace:
+        if record.get("event") != "replay_transition":
+            continue
+        dense_reward = _dense_reward_from_dict(_mapping(record, "dense_reward"))
+        transitions.append(
+            ReplayTransition(
+                graph_id=str(record["graph_id"]),
+                next_graph_id=str(record["next_graph_id"]),
+                action=MacroAction(str(record["action"])),
+                reward=float(record["reward"]),
+                done=bool(record.get("done", False)),
+                state=_mapping(record, "state"),
+                next_state=_mapping(record, "next_state"),
+                action_mask={
+                    str(action): bool(is_legal)
+                    for action, is_legal in _mapping(record, "action_mask").items()
+                },
+                next_action_mask={
+                    str(action): bool(is_legal)
+                    for action, is_legal in _mapping(record, "next_action_mask").items()
+                },
+                dense_reward=dense_reward,
+            )
+        )
+    return tuple(transitions)
+
+
+def _stop_transition_from_trace(
+    trace: list[dict[str, Any]],
+    terminal_reward: float,
+) -> ReplayTransition | None:
+    terminal = next(
+        (record for record in reversed(trace) if record.get("event") == "terminal"),
+        None,
+    )
+    if terminal is None:
+        return None
+    src_graph_id = str(terminal.get("src_graph_id", ""))
+    if not src_graph_id:
+        return None
+    stop_decision = None
+    for record in reversed(trace):
+        if record.get("event") != "policy_decision":
+            continue
+        decision = _mapping(record, "decision")
+        if str(decision.get("action")) == MacroAction.STOP.value:
+            stop_decision = record
+            break
+    if stop_decision is None:
+        return None
+    state = _mapping(stop_decision, "state")
+    action_mask = {
+        str(action): bool(is_legal)
+        for action, is_legal in _mapping(stop_decision, "legal_action_mask").items()
+    }
+    return ReplayTransition(
+        graph_id=src_graph_id,
+        next_graph_id=src_graph_id,
+        action=MacroAction.STOP,
+        reward=_terminal_stop_reward(terminal_reward),
+        done=True,
+        state=state,
+        next_state=state,
+        action_mask=action_mask,
+        next_action_mask={action: False for action in action_mask},
+        dense_reward=_zero_dense_reward(),
+    )
+
+
+def _dense_reward_from_dict(data: Mapping[str, Any]) -> DenseRewardBreakdown:
+    return DenseRewardBreakdown(
+        visible_quality_delta=float(data["visible_quality_delta"]),
+        issue_resolution_delta=float(data["issue_resolution_delta"]),
+        token_penalty=float(data["token_penalty"]),
+        call_penalty=float(data["call_penalty"]),
+        complexity_penalty=float(data["complexity_penalty"]),
+        step_penalty=float(data["step_penalty"]),
+        reward=float(data["reward"]),
+    )
+
+
+def _zero_dense_reward() -> DenseRewardBreakdown:
+    return DenseRewardBreakdown(
+        visible_quality_delta=0.0,
+        issue_resolution_delta=0.0,
+        token_penalty=0.0,
+        call_penalty=0.0,
+        complexity_penalty=0.0,
+        step_penalty=0.0,
+        reward=0.0,
+    )
+
+
+def _terminal_action_bonus(terminal_reward: float, index: int, total: int) -> float:
+    """Shape each graph edit by final correctness while favoring later edits."""
+
+    if total <= 0:
+        return 0.0
+    progress = (index + 1) / total
+    decay = 0.6 + 0.4 * progress
+    base = 1.0 if terminal_reward > 0.0 else -0.5
+    return round(base * decay, 6)
+
+
+def _terminal_stop_reward(terminal_reward: float) -> float:
+    """Directly teach STOP from final correctness."""
+
+    return 0.8 if terminal_reward > 0.0 else -1.1
+
+
 def _merge_trace_snapshots(
     gog: OrganizationGoG,
     adapter: MMLUAdapter,
@@ -326,24 +545,8 @@ def _snapshot_from_dict(data: Mapping[str, Any]) -> OrgGraphSnapshot:
         graph_id=str(data["graph_id"]),
         domain=str(data["domain"]),
         step=int(data["step"]),
-        nodes=tuple(
-            NodeSpec(
-                node_id=str(node["node_id"]),
-                role=str(node["role"]),
-                runner=str(node.get("runner", "openai_compatible")),
-                profile=str(node.get("profile", "")),
-                metadata=node.get("metadata", {}),
-            )
-            for node in data.get("nodes", ())
-        ),
-        edges=tuple(
-            EdgeSpec(
-                src=str(edge["src"]),
-                dst=str(edge["dst"]),
-                payload=str(edge.get("payload", "default")),
-            )
-            for edge in data.get("edges", ())
-        ),
+        nodes=tuple(_node_from_dict(node) for node in data.get("nodes", ())),
+        edges=tuple(_edge_from_dict(edge) for edge in data.get("edges", ())),
         parent_graph_id=(
             str(data["parent_graph_id"]) if data.get("parent_graph_id") is not None else None
         ),
@@ -357,6 +560,33 @@ def _transition_from_dict(data: Mapping[str, Any]) -> TransitionEdge:
         src_graph_id=str(data["src_graph_id"]),
         dst_graph_id=str(data["dst_graph_id"]),
         action=MacroAction(str(data["action"])),
+    )
+
+
+def _node_from_dict(node: Mapping[str, Any]) -> NodeSpec:
+    return NodeSpec(
+        node_id=str(node["node_id"]),
+        role=str(node["role"]),
+        runner=str(node.get("runner", "openai_compatible")),
+        profile=str(node.get("profile", "")),
+        node_kind=str(node.get("node_kind", node.get("node_type", "atomic"))),
+        module_type=str(node.get("module_type", "")),
+        model_tier=str(node.get("model_tier", "standard")),
+        input_ports=tuple(str(item) for item in node.get("input_ports", ())),
+        output_ports=tuple(str(item) for item in node.get("output_ports", ())),
+        internal_nodes=tuple(_node_from_dict(child) for child in node.get("internal_nodes", ())),
+        internal_edges=tuple(_edge_from_dict(edge) for edge in node.get("internal_edges", ())),
+        metadata=node.get("metadata", {}),
+    )
+
+
+def _edge_from_dict(edge: Mapping[str, Any]) -> EdgeSpec:
+    return EdgeSpec(
+        src=str(edge["src"]),
+        dst=str(edge["dst"]),
+        payload=str(edge.get("payload", "default")),
+        edge_kind=str(edge.get("edge_kind", "exec")),
+        metadata=edge.get("metadata", {}),
     )
 
 
@@ -399,11 +629,19 @@ def _save_memory(gog: OrganizationGoG, path: Path) -> None:
     temporary.replace(path)
 
 
+def _save_policy(policy: HierarchicalGNNPolicy, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    policy.save(str(temporary))
+    temporary.replace(path)
+
+
 def _summarize(
     records: list[dict[str, Any]],
     skipped_count: int,
     gog: OrganizationGoG,
     memory_path: Path,
+    policy_path: Path,
 ) -> dict[str, Any]:
     completed = [record for record in records if record.get("status") == "completed"]
     failed = [record for record in records if record.get("status") == "failed"]
@@ -418,6 +656,14 @@ def _summarize(
         "accuracy": round(correct / len(records), 6) if records else None,
         "completed_accuracy": round(correct / len(completed), 6) if completed else None,
         "episode_credit_count": sum(int(record.get("credit_count", 0)) for record in completed),
+        "policy_update_count": sum(
+            int(record.get("policy_update_count", 0)) for record in completed
+        ),
+        "policy_loss_mean": _mean(
+            float(record["policy_loss_mean"])
+            for record in completed
+            if record.get("policy_loss_mean") is not None
+        ),
         "memory_experience_count": len(gog.experiences),
         "memory_snapshot_count": len(gog.snapshots),
         "memory_transition_count": len(gog.transitions),
@@ -426,6 +672,7 @@ def _summarize(
         "per_subject": _group_accuracy(completed, "subject"),
         "per_subject_profile": _group_accuracy(completed, "subject_profile"),
         "memory_checkpoint": str(memory_path),
+        "policy_checkpoint": str(policy_path),
         "updated_at": _now(),
     }
 
@@ -464,6 +711,13 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _mean(values: Iterable[float]) -> float | None:
+    items = list(values)
+    if not items:
+        return None
+    return round(sum(items) / len(items), 6)
 
 
 def _read_trace(path: Path) -> list[dict[str, Any]]:

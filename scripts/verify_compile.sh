@@ -7,6 +7,7 @@ python -c "from gogagent.llm import OpenAICompatibleLLM; print(OpenAICompatibleL
 python -m gogagent.cli --help
 python -m gogagent.cli eval --help
 python -m gogagent.cli train-mmlu --help
+python scripts/smoke_contracts.py
 if grep -R -I -n -E "MockLLM|mock_llm|gogagent\\.llm\\.mock" \
   --include="*.py" \
   gogagent scripts 2>/dev/null; then

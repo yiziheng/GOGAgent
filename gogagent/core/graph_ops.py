@@ -18,20 +18,39 @@ def apply_compiled_edit(
     action: MacroAction,
     edit: CompiledEdit,
 ) -> OrgGraphSnapshot:
-    """Create a new immutable DAG snapshot from a deterministic compiled edit."""
+    """Create a new immutable hierarchical GoG from a deterministic edit."""
 
-    existing_ids = {node.node_id for node in graph.nodes}
-    duplicate_ids = existing_ids.intersection(node.node_id for node in edit.added_nodes)
+    removed_ids = set(edit.removed_nodes)
+    existing_by_id = {
+        node.node_id: node for node in graph.nodes if node.node_id not in removed_ids
+    }
+    updated_ids = {node.node_id for node in edit.updated_nodes}
+    missing_updates = sorted(updated_ids - set(existing_by_id))
+    if missing_updates:
+        raise ValueError(f"compiled edit updates missing node ids: {missing_updates}")
+    for node in edit.updated_nodes:
+        existing_by_id[node.node_id] = node
+    duplicate_ids = set(existing_by_id).intersection(
+        node.node_id for node in edit.added_nodes
+    )
     if duplicate_ids:
         raise ValueError(f"compiled edit adds duplicate node ids: {sorted(duplicate_ids)}")
+    removed_edge_keys = {_edge_key(edge) for edge in edit.removed_edges}
+    retained_edges = tuple(
+        edge
+        for edge in graph.edges
+        if edge.src not in removed_ids
+        and edge.dst not in removed_ids
+        and _edge_key(edge) not in removed_edge_keys
+    )
     metadata = dict(graph.metadata)
     metadata.update(edit.metadata)
     return OrgGraphSnapshot(
         graph_id=make_graph_id(),
         domain=graph.domain,
         step=graph.step + 1,
-        nodes=graph.nodes + edit.added_nodes,
-        edges=graph.edges + edit.added_edges,
+        nodes=tuple(existing_by_id.values()) + edit.added_nodes,
+        edges=retained_edges + edit.added_edges,
         parent_graph_id=graph.graph_id,
         created_by=action,
         metadata=metadata,
@@ -78,10 +97,23 @@ def graph_depth(graph: OrgGraphSnapshot) -> int:
 
 
 def default_signature(graph: OrgGraphSnapshot) -> GraphSignature:
+    graph_agents = tuple(node for node in graph.nodes if node.node_kind == "graph")
+    atomic_agents = tuple(node for node in graph.nodes if node.node_kind != "graph")
     return GraphSignature(
         roles=tuple(sorted(node.role for node in graph.nodes)),
         node_count=len(graph.nodes),
         edge_count=len(graph.edges),
         depth=graph_depth(graph),
         payload_modes=tuple(sorted({edge.payload for edge in graph.edges})),
+        graph_agent_count=len(graph_agents),
+        atomic_agent_count=len(atomic_agents),
+        module_types=tuple(sorted(node.module_type for node in graph_agents if node.module_type)),
+        max_graphagent_internal_nodes=max(
+            (len(node.internal_nodes) for node in graph_agents),
+            default=0,
+        ),
     )
+
+
+def _edge_key(edge: EdgeSpec) -> tuple[str, str, str, str]:
+    return (edge.src, edge.dst, edge.payload, edge.edge_kind)

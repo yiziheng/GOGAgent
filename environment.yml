@@ -6,4 +6,5 @@ dependencies:
   - pip>=23
   - setuptools>=68
   - pip:
+      - torch>=2.0,<3.0
       - -e .

@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from gogagent.core.types import OrgGraphSnapshot, SimilarityEdge, TransitionEdge
+from gogagent.core.types import OrgGraphSnapshot, TransitionEdge
 
 
 _NODE_WIDTH = 180
@@ -38,7 +38,6 @@ def export_snapshot(
 def export_gog(
     snapshots: Sequence[OrgGraphSnapshot],
     transitions: Sequence[TransitionEdge],
-    similarities: Sequence[SimilarityEdge],
     directory: str | Path,
     *,
     stem: str = "gog",
@@ -55,11 +54,10 @@ def export_gog(
         {
             "snapshots": [snapshot.to_dict() for snapshot in snapshots],
             "transitions": [transition.to_dict() for transition in transitions],
-            "similarities": [similarity.to_dict() for similarity in similarities],
         },
     )
     svg_path.write_text(
-        _render_gog_svg(snapshots, transitions, similarities, title=title),
+        _render_gog_svg(snapshots, transitions, title=title),
         encoding="utf-8",
     )
     return json_path, svg_path
@@ -227,14 +225,21 @@ def _render_snapshot_svg(snapshot: OrgGraphSnapshot) -> str:
 
     for node in snapshot.nodes:
         x, y = shifted[node.node_id]
+        fill = "#f3e8ff" if node.node_kind == "graph" else "#e5f4ff"
+        stroke = "#7c3aed" if node.node_kind == "graph" else "#2680b3"
+        detail = (
+            f"GraphAgent | internal={len(node.internal_nodes)} | tier={node.model_tier}"
+            if node.node_kind == "graph"
+            else f"id={node.node_id} | tier={node.model_tier}"
+        )
         body.append(
-            f'  <rect x="{x}" y="{y}" width="{_NODE_WIDTH}" height="{_NODE_HEIGHT}" rx="10" fill="#e5f4ff" stroke="#2680b3" stroke-width="2"/>'
+            f'  <rect x="{x}" y="{y}" width="{_NODE_WIDTH}" height="{_NODE_HEIGHT}" rx="10" fill="{fill}" stroke="{stroke}" stroke-width="2"/>'
         )
         body.append(
             f'  <text x="{x + 12}" y="{y + 25}" class="label">{escape(node.role)}</text>'
         )
         body.append(
-            f'  <text x="{x + 12}" y="{y + 45}" class="detail">id={escape(node.node_id)} | runner={escape(node.runner)}</text>'
+            f'  <text x="{x + 12}" y="{y + 45}" class="detail">{escape(detail)}</text>'
         )
     return _svg_document(width, height, body)
 
@@ -242,7 +247,6 @@ def _render_snapshot_svg(snapshot: OrgGraphSnapshot) -> str:
 def _render_gog_svg(
     snapshots: Sequence[OrgGraphSnapshot],
     transitions: Sequence[TransitionEdge],
-    similarities: Sequence[SimilarityEdge],
     *,
     title: str,
 ) -> str:
@@ -261,20 +265,8 @@ def _render_gog_svg(
     }
     body = [
         f'  <text x="{_MARGIN}" y="29" class="title">{escape(title)}</text>',
-        f'  <text x="{_MARGIN}" y="49" class="detail">{len(snapshots)} graph snapshots | {len(transitions)} edit transitions | {len(similarities)} similarity edges</text>',
+        f'  <text x="{_MARGIN}" y="49" class="detail">{len(snapshots)} graph snapshots | {len(transitions)} edit transitions</text>',
     ]
-
-    for edge in similarities:
-        if edge.src_graph_id not in shifted or edge.dst_graph_id not in shifted:
-            continue
-        x1, y1 = _center(shifted[edge.src_graph_id], _GRAPH_WIDTH, _GRAPH_HEIGHT)
-        x2, y2 = _center(shifted[edge.dst_graph_id], _GRAPH_WIDTH, _GRAPH_HEIGHT)
-        body.append(
-            f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#9f7aea" stroke-width="2" stroke-dasharray="7 6" opacity="0.72"/>'
-        )
-        body.append(
-            f'  <text x="{(x1 + x2) // 2}" y="{(y1 + y2) // 2 - 7}" text-anchor="middle" class="edge-label">similarity={edge.similarity:.2f}</text>'
-        )
 
     for edge in transitions:
         if edge.src_graph_id not in shifted or edge.dst_graph_id not in shifted:

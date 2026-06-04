@@ -8,7 +8,7 @@ import json
 import re
 from typing import Any, Mapping
 
-from gogagent.adapters.base import DomainAdapter
+from gogagent.adapters.base import DomainAdapter, compile_common_module_edit
 from gogagent.core.actions import MacroAction
 from gogagent.core.types import (
     CompiledEdit,
@@ -40,12 +40,20 @@ _NEGATED_CHECKER_ISSUE_RE = re.compile(
 )
 _ANSWER_ROLES = {
     "Adjudicator",
+    "ArithmeticUnitCheckGraph",
+    "CritiqueReviseGraph",
+    "DecomposeSolveVerifyGraph",
     "IndependentMathSolver",
     "MathReviser",
     "Rechecker",
     "Solver",
 }
-_CHECKER_ROLES = {"ArithmeticChecker", "Rechecker"}
+_CHECKER_ROLES = {"ArithmeticChecker", "ArithmeticUnitCheckGraph", "Rechecker", "CritiqueReviseGraph"}
+_MODULE_ACTIONS = {
+    MacroAction.ADD_DECOMPOSE_SOLVE_VERIFY_GRAPH: "DecomposeSolveVerifyGraph",
+    MacroAction.ADD_ARITHMETIC_UNIT_CHECK_GRAPH: "ArithmeticUnitCheckGraph",
+    MacroAction.ADD_CRITIQUE_REVISE_GRAPH: "CritiqueReviseGraph",
+}
 
 _ROLE_TO_ID = {
     "Solver": "solver",
@@ -92,6 +100,15 @@ class GSM8KAdapter(DomainAdapter):
         feedback: VisibleFeedback,
     ) -> CompiledEdit:
         del feedback  # Compilation is deterministic and never consults labels.
+        common = compile_common_module_edit(
+            graph,
+            action,
+            domain=self.name,
+            module_type=_MODULE_ACTIONS.get(action),
+            fallback_source=self._answer_source(graph),
+        )
+        if common is not None:
+            return common
         roles = {node.role for node in graph.nodes}
 
         if action is MacroAction.STOP:
@@ -222,6 +239,9 @@ class GSM8KAdapter(DomainAdapter):
     def _prompt(role: str, question: str) -> str:
         instructions = {
             "Solver": "Solve the word problem. End with exactly: FINAL: <number>.",
+            "DecomposeSolveVerifyGraph": "Run a decomposer, math solver, and verifier. End with exactly: FINAL: <number>.",
+            "ArithmeticUnitCheckGraph": "Check equations, units, and arithmetic; repair if needed. End with exactly: FINAL: <number>.",
+            "CritiqueReviseGraph": "Critique the candidate math answer, revise it, and recheck. End with exactly: FINAL: <number>.",
             "MathDecomposer": "Break the word problem into explicit arithmetic steps.",
             "ArithmeticChecker": "Check the candidate arithmetic and report any issue.",
             "MathReviser": "Revise the candidate answer using the arithmetic review. End with exactly: FINAL: <number>.",
@@ -270,7 +290,10 @@ class GSM8KAdapter(DomainAdapter):
             "IndependentMathSolver": 1,
             "MathReviser": 2,
             "Rechecker": 3,
-            "Adjudicator": 4,
+            "DecomposeSolveVerifyGraph": 4,
+            "ArithmeticUnitCheckGraph": 5,
+            "CritiqueReviseGraph": 6,
+            "Adjudicator": 7,
         }
         candidates = [node for node in graph.nodes if node.role in _ANSWER_ROLES]
         if not candidates:
@@ -347,8 +370,8 @@ class GSM8KAdapter(DomainAdapter):
         llm_calls: int,
     ) -> VisibleFeedback:
         roles = {node.role for node in graph.nodes}
-        has_checker = "ArithmeticChecker" in roles
-        has_revision = "Rechecker" in roles
+        has_checker = "ArithmeticChecker" in roles or "ArithmeticUnitCheckGraph" in roles
+        has_revision = "Rechecker" in roles or "CritiqueReviseGraph" in roles
         has_alternative = "Adjudicator" in roles
         numeric_answers = {
             node.node_id: numeric_answer
@@ -378,7 +401,7 @@ class GSM8KAdapter(DomainAdapter):
             disagreement_level="medium" if len(distinct_numeric_answers) > 1 else "none",
             issue_codes=tuple(issues),
             signals={
-                "has_analysis": "MathDecomposer" in roles,
+                "has_analysis": "MathDecomposer" in roles or "DecomposeSolveVerifyGraph" in roles,
                 "has_checker": has_checker,
                 "has_revision": has_revision,
                 "has_alternative": has_alternative,
