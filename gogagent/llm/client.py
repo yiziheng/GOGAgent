@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import time
 from typing import Any, Mapping
@@ -60,6 +60,12 @@ class AgentContext:
     """Execution context passed from graph runtime to every Agent."""
 
     llm_client: "LLMClient"
+    llm_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def record_llm_call(self, event: Mapping[str, Any]) -> None:
+        """Record one node-level LLM call for audit artifacts."""
+
+        self.llm_calls.append(dict(event))
 
 
 class LLMClient(ABC):

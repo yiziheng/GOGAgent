@@ -37,7 +37,9 @@ def main() -> None:
 
     graph, action_records = build_fixed_action_graph()
     problem, gold = mmlu_problem()
+    llm_start = len(context.llm_calls)
     output = execute_graph(graph, problem, context=context)
+    llm_calls = list(context.llm_calls[llm_start:])
     format_result = check_output_format(output)
     oracle_result = score_answer("mmlu", {"answer": gold}, output)
 
@@ -50,6 +52,8 @@ def main() -> None:
             "output": output.to_dict(),
             "format": format_result.to_dict(),
             "oracle": oracle_result.to_dict(),
+            "llm_call_count": len(llm_calls),
+            "llm_calls": llm_calls,
         }
     )
     graph_json, graph_svg = recorder.save_graph(graph)
@@ -60,6 +64,8 @@ def main() -> None:
         "output": output.to_dict(),
         "format": format_result.to_dict(),
         "oracle": oracle_result.to_dict(),
+        "llm_call_count": len(llm_calls),
+        "llm_calls": llm_calls,
         "actions": action_records,
         "artifacts": {
             **recorder.paths(),
@@ -75,6 +81,7 @@ def main() -> None:
                 "answer": output.answer,
                 "correct": oracle_result.correct,
                 "format_valid": format_result.valid,
+                "llm_call_count": len(llm_calls),
                 "artifact_dir": str(recorder.run_dir),
                 "gog_json": str(graph_json),
                 "gog_svg": str(graph_svg),
