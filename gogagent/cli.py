@@ -1,142 +1,57 @@
-"""Production CLI for training GoG memory and evaluating real benchmarks."""
+"""Small CLI for the refactored GOG runtime."""
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, is_dataclass
 import json
-import os
 from pathlib import Path
-import sys
 from typing import Any
 
-from gogagent.evaluation import BenchmarkRunner, EvaluationConfig
-from gogagent.llm import OpenAICompatibleLLM
+from gogagent.actions import ACTION_ORDER, get_action_spec
+from gogagent.agents import list_agent_specs
+from gogagent.artifacts import save_graph_svg
+from gogagent.graph import load_graph
 
 
-DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-v4-flash"
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run real GOGAgent workflows")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Inspect refactored GOGAgent runtime")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    evaluate = subparsers.add_parser("eval", help="evaluate a real benchmark split")
-    _add_backend_arguments(evaluate)
-    evaluate.add_argument("--dataset", choices=("gsm8k", "mmlu", "humaneval"), required=True)
-    evaluate.add_argument("--data-path", type=Path, required=True)
-    evaluate.add_argument("--split", default="test")
-    evaluate.add_argument("--artifact-root", type=Path, default=Path("artifacts/evals"))
-    evaluate.add_argument("--run-id", required=True)
-    evaluate.add_argument("--workers", type=int, default=1)
-    evaluate.add_argument("--start-index", type=int, default=0)
-    evaluate.add_argument("--limit", type=int, default=None)
-    evaluate.add_argument("--resume", action="store_true")
-    evaluate.add_argument(
-        "--policy-checkpoint",
-        type=Path,
-        default=None,
-        help="load a saved torch GNN policy checkpoint for graph construction",
-    )
 
-    train = subparsers.add_parser("train-mmlu", help="build GoG memory from an MMLU split")
-    _add_backend_arguments(train)
-    train.add_argument("--data-path", type=Path, required=True)
-    train.add_argument("--split", default="dev")
-    train.add_argument("--artifact-root", type=Path, default=Path("artifacts/training"))
-    train.add_argument("--run-id", required=True)
-    train.add_argument("--start-index", type=int, default=0)
-    train.add_argument("--limit", type=int, default=None)
-    train.add_argument("--resume", action="store_true")
-    train.add_argument(
-        "--policy-checkpoint-in",
-        type=Path,
-        default=None,
-        help="optional initial torch GNN policy checkpoint",
-    )
-    train.add_argument(
-        "--policy-checkpoint-out",
-        type=Path,
-        default=None,
-        help="where to save the trained torch GNN policy; defaults to <run>/policy.pt",
-    )
-    train.add_argument("--policy-learning-rate", type=float, default=0.01)
-    train.add_argument("--policy-gamma", type=float, default=0.9)
-    train.add_argument("--policy-epsilon", type=float, default=0.05)
-    return parser.parse_args()
+    subparsers.add_parser("agents", help="print registered agent specs as JSON")
+    subparsers.add_parser("actions", help="print action specs as JSON")
 
+    render = subparsers.add_parser("render", help="render a saved gog.json to SVG")
+    render.add_argument("--graph-json", type=Path, required=True)
+    render.add_argument("--out", type=Path, required=True)
 
-def main() -> None:
-    args = parse_args()
-    backend = _backend(args)
-    print(json.dumps({"backend": backend.describe()}, ensure_ascii=False))
-    if args.command == "eval":
-        summary = BenchmarkRunner(
-            EvaluationConfig(
-                dataset=args.dataset,
-                data_path=args.data_path,
-                artifact_root=args.artifact_root,
-                run_id=args.run_id,
-                split=args.split,
-                workers=args.workers,
-                start_index=args.start_index,
-                limit=args.limit,
-                resume=args.resume,
-                policy_checkpoint=args.policy_checkpoint,
-            ),
-            backend,
-        ).run()
+    args = parser.parse_args(argv)
+    if args.command == "agents":
+        print_json(list_agent_specs())
+    elif args.command == "actions":
+        print_json([get_action_spec(action).__dict__ for action in ACTION_ORDER])
+    elif args.command == "render":
+        graph = load_graph(args.graph_json)
+        output_path = save_graph_svg(graph, args.out)
+        print_json({"svg": str(output_path)})
     else:
-        from gogagent.training.mmlu_runner import MMLUMemoryTrainer, MMLUTrainingConfig
-
-        summary = MMLUMemoryTrainer(
-            MMLUTrainingConfig(
-                data_path=args.data_path,
-                artifact_root=args.artifact_root,
-                run_id=args.run_id,
-                split=args.split,
-                start_index=args.start_index,
-                limit=args.limit,
-                resume=args.resume,
-                policy_checkpoint_in=args.policy_checkpoint_in,
-                policy_checkpoint_out=args.policy_checkpoint_out,
-                policy_learning_rate=args.policy_learning_rate,
-                policy_gamma=args.policy_gamma,
-                policy_epsilon=args.policy_epsilon,
-            ),
-            backend,
-        ).run()
-    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+        raise AssertionError(f"unhandled command {args.command!r}")
 
 
-def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--base-url", default=os.environ.get("GOGAGENT_BASE_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--model", default=os.environ.get("GOGAGENT_MODEL", DEFAULT_MODEL))
-    parser.add_argument("--timeout", type=float, default=float(os.environ.get("GOGAGENT_TIMEOUT_SECONDS", "120")))
-    parser.add_argument("--max-retries", type=int, default=int(os.environ.get("GOGAGENT_MAX_RETRIES", "2")))
-    parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("GOGAGENT_MAX_TOKENS", "1024")))
-    parser.add_argument("--temperature", type=float, default=float(os.environ.get("GOGAGENT_TEMPERATURE", "0")))
-    parser.add_argument("--thinking", choices=("enabled", "disabled"), default=None)
-    parser.add_argument(
-        "--api-key-stdin",
-        action="store_true",
-        help="read one API key line from stdin without persisting it",
-    )
+def print_json(value: Any) -> None:
+    print(json.dumps(to_jsonable(value), ensure_ascii=False, indent=2, sort_keys=True))
 
 
-def _backend(args: Any) -> OpenAICompatibleLLM:
-    api_key = sys.stdin.readline().rstrip("\r\n") if args.api_key_stdin else None
-    if args.api_key_stdin and not api_key:
-        raise RuntimeError("--api-key-stdin requires one non-empty line on stdin")
-    return OpenAICompatibleLLM(
-        base_url=args.base_url,
-        model=args.model,
-        api_key=api_key,
-        timeout=args.timeout,
-        max_retries=args.max_retries,
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        thinking=args.thinking,
-    )
+def to_jsonable(value: Any) -> Any:
+    if hasattr(value, "value"):
+        return value.value
+    if is_dataclass(value):
+        return to_jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(item) for item in value]
+    return value
 
 
 if __name__ == "__main__":

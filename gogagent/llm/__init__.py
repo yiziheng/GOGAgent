@@ -1,6 +1,21 @@
-"""LLM backend abstractions."""
+"""Strict LLM client abstractions for agent execution."""
 
-from gogagent.llm.base import LLMBackend, LLMResponse
-from gogagent.llm.openai_compatible import OpenAICompatibleLLM
+from gogagent.llm.client import (
+    AgentContext,
+    LLMClient,
+    LLMClientError,
+    LLMJsonError,
+    LLMJsonResponse,
+    LLMUsage,
+    OpenAICompatibleClient,
+)
 
-__all__ = ["LLMBackend", "LLMResponse", "OpenAICompatibleLLM"]
+__all__ = [
+    "AgentContext",
+    "LLMClient",
+    "LLMClientError",
+    "LLMJsonError",
+    "LLMJsonResponse",
+    "LLMUsage",
+    "OpenAICompatibleClient",
+]

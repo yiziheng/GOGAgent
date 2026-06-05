@@ -13,8 +13,8 @@ from typing import Any, Iterator, Mapping
 class DatasetExample:
     """Keep labels out of inference by construction.
 
-    Pass only ``public_task`` to ``RolloutEngine.run``. The ``gold`` field is
-    reserved for training code that explicitly imports a train-only oracle.
+    Pass only ``public_task`` to graph execution. The ``gold`` field is reserved
+    for reward/evaluation code after inference has completed.
     """
 
     dataset: str
