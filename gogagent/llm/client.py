@@ -78,6 +78,8 @@ class LLMClient(ABC):
         role: str,
         prompt: str,
         payload: Mapping[str, Any],
+        response_schema: Mapping[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LLMJsonResponse:
         """Return one parsed JSON object or raise an explicit error."""
 
@@ -139,9 +141,17 @@ class OpenAICompatibleClient(LLMClient):
         role: str,
         prompt: str,
         payload: Mapping[str, Any],
+        response_schema: Mapping[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LLMJsonResponse:
         started_at = time.monotonic()
-        request_payload = self._build_payload(role=role, prompt=prompt, payload=payload)
+        request_payload = self._build_payload(
+            role=role,
+            prompt=prompt,
+            payload=payload,
+            response_schema=response_schema,
+            instruction=instruction,
+        )
         try:
             response = self._client.chat.completions.create(**request_payload)
         except (APIConnectionError, APITimeoutError, APIError) as exc:
@@ -174,20 +184,24 @@ class OpenAICompatibleClient(LLMClient):
         role: str,
         prompt: str,
         payload: Mapping[str, Any],
+        response_schema: Mapping[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> dict[str, Any]:
+        schema = response_schema or {
+            "sender": "string optional",
+            "role": "string",
+            "content": "string",
+            "answer": "string or null",
+            "confidence": "number or null",
+            "notes": "object",
+            "metadata": "object",
+        }
         user_payload = {
             "agent_prompt": prompt,
             "payload": dict(payload),
-            "required_output_schema": {
-                "sender": "string optional",
-                "role": "string",
-                "content": "string",
-                "answer": "string or null",
-                "confidence": "number or null",
-                "notes": "object",
-                "metadata": "object",
-            },
-            "instruction": "Return exactly one JSON object. Do not wrap it in markdown.",
+            "required_output_schema": dict(schema),
+            "instruction": instruction
+            or "Return exactly one JSON object. Do not wrap it in markdown.",
         }
         request_payload: dict[str, Any] = {
             "model": self.model,

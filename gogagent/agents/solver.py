@@ -11,7 +11,9 @@ from gogagent.agents.base import Agent
 AGENT_PROMPT = (
     "Solve the task directly using the original problem and any upstream "
     "structured context. Return a GraphMessage JSON object with a parseable "
-    "answer field."
+    "answer field. For multiple-choice tasks with options labeled A, B, C, "
+    "and D, set the answer field to exactly the selected option label, not "
+    "the option text."
 )
 
 

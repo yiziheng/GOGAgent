@@ -20,6 +20,10 @@ from gogagent.reward.format import coerce_graph_message
 
 
 _MMLU_OPTION_LABELS = ("A", "B", "C", "D")
+_MMLU_CHOICE_RE = re.compile(
+    r"(?:^|[\s\(\[\{\"'`])(?:option|answer|choice|letter)?\s*[:\-]?\s*([A-D])(?:[\s\)\]\}.:,;\"'`]|$)",
+    re.IGNORECASE,
+)
 _NUMBER_RE = re.compile(
     r"[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*/\s*[-+]?\d[\d,]*)?"
 )
@@ -76,7 +80,7 @@ def score_answer(
 
     try:
         if dataset_name == "mmlu":
-            correct = _score_mmlu(prediction, gold_value)
+            correct = _score_mmlu(example, prediction, gold_value)
         elif dataset_name == "gsm8k":
             correct = _score_gsm8k(prediction, gold_value)
         elif dataset_name == "humaneval":
@@ -123,7 +127,8 @@ def extract_gold(example: Mapping[str, Any], gold: Any | None = None) -> Any | N
     return None
 
 
-def _score_mmlu(prediction: Any, gold: Any) -> bool:
+def _score_mmlu(example: Mapping[str, Any], prediction: Any, gold: Any) -> bool:
+    del example
     return _extract_mmlu_option(prediction) == _extract_mmlu_option(gold)
 
 
@@ -136,15 +141,9 @@ def _extract_mmlu_option(value: Any) -> str:
     text = str(value).strip().upper()
     if text in _MMLU_OPTION_LABELS:
         return text
-    explicit = re.search(
-        r"\b(?:ANSWER|OPTION|CHOICE)\s*[:=]?\s*\(?([A-D])\)?\b",
-        text,
-    )
-    if explicit:
-        return explicit.group(1)
-    standalone = re.findall(r"\b([A-D])\b", text)
-    if len(standalone) == 1:
-        return standalone[0]
+    match = _MMLU_CHOICE_RE.search(text)
+    if match:
+        return match.group(1).upper()
     raise ValueError(f"cannot extract exactly one MMLU option from {value!r}")
 
 
