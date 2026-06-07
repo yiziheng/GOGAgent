@@ -9,11 +9,8 @@ from gogagent.agents.base import Agent
 
 
 AGENT_PROMPT = (
-    "Solve the task directly using the original problem and any upstream "
-    "structured context. Return a GraphMessage JSON object with a parseable "
-    "answer field. For multiple-choice tasks with options labeled A, B, C, "
-    "and D, set the answer field to exactly the selected option label, not "
-    "the option text."
+    "Solve the task directly. If upstream context is provided, use it only as "
+    "helpful context. Your output must be the final answer only."
 )
 
 
@@ -26,3 +23,4 @@ class SolverAgent(Agent):
     description: ClassVar[str] = "Solves the task and produces an initial answer."
     standalone: ClassVar[bool] = True
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "answer"

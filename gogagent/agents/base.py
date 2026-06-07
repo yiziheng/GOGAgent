@@ -5,8 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar, Mapping
 
+from gogagent.datasets.prompt_specs import (
+    answer_instruction,
+    format_problem,
+    parse_answer_text,
+)
 from gogagent.graph.schema import GraphMessage
-from gogagent.llm.client import AgentContext
+from gogagent.llm.client import AgentContext, LLMTextResponse
 
 
 @dataclass
@@ -19,7 +24,8 @@ class Agent:
     role: ClassVar[str] = "agent"
     description: ClassVar[str] = "Base graph agent."
     standalone: ClassVar[bool] = True
-    prompt: ClassVar[str] = "Return a structured GraphMessage JSON object."
+    prompt: ClassVar[str] = "Produce useful downstream context."
+    output_mode: ClassVar[str] = "text"
 
     def execute(
         self,
@@ -33,39 +39,62 @@ class Agent:
             raise RuntimeError(
                 f"{self.agent_type}.execute requires AgentContext with llm_client"
             )
-        response = context.llm_client.chat_json(
+        if self.output_mode in {"answer", "candidate_answer"}:
+            return self._execute_answer(problem, inputs, context)
+        return self._execute_text(problem, inputs, context)
+
+    def build_prompt(
+        self,
+        problem: Mapping[str, Any],
+        inputs: Mapping[str, GraphMessage],
+    ) -> str:
+        """Build the natural-language prompt sent to the LLM."""
+
+        sections = [self.prompt, format_problem(problem)]
+        upstream = format_upstream_context(inputs)
+        if upstream:
+            sections.append(upstream)
+        if self.output_mode in {"answer", "candidate_answer"}:
+            sections.append(answer_instruction(problem))
+        return "\n\n".join(section for section in sections if section.strip())
+
+    def _execute_text(
+        self,
+        problem: Mapping[str, Any],
+        inputs: Mapping[str, GraphMessage],
+        context: AgentContext,
+    ) -> GraphMessage:
+        response = context.llm_client.chat_text(
             role=self.role,
-            prompt=self.prompt,
-            payload={
-                "problem": dict(problem),
-                "inputs": {
-                    node_id: message.to_dict()
-                    for node_id, message in inputs.items()
-                },
-                "agent": self.to_dict(),
+            prompt=self.build_prompt(problem, inputs),
+        )
+        content = response.text.strip()
+        if not content:
+            raise RuntimeError(f"{self.agent_type} LLM response must not be empty")
+        return self.make_message(
+            content=content,
+            metadata={"llm": llm_metadata(response)},
+        )
+
+    def _execute_answer(
+        self,
+        problem: Mapping[str, Any],
+        inputs: Mapping[str, GraphMessage],
+        context: AgentContext,
+    ) -> GraphMessage:
+        response = context.llm_client.chat_text(
+            role=self.role,
+            prompt=self.build_prompt(problem, inputs),
+        )
+        answer = parse_answer_text(response.text, problem)
+        return self.make_message(
+            content=answer,
+            answer=answer,
+            metadata={
+                "raw_output": response.text,
+                "llm": llm_metadata(response),
             },
         )
-        data = dict(response.data)
-        if "role" not in data or not str(data.get("role", "")).strip():
-            data["role"] = self.role
-        if "content" not in data or not isinstance(data.get("content"), str):
-            raise RuntimeError(
-                f"{self.agent_type} LLM response must include string content"
-            )
-        message = GraphMessage.from_dict(data)
-        message.sender = self.display_name
-        message.metadata.update(
-            {
-                "agent_type": self.agent_type,
-                "standalone": self.standalone,
-                "llm": {
-                    "model": response.model,
-                    "usage": response.usage.to_dict(),
-                    "latency_seconds": response.latency_seconds,
-                },
-            }
-        )
-        return message
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable agent descriptor."""
@@ -77,6 +106,7 @@ class Agent:
             "description": self.description,
             "standalone": self.standalone,
             "prompt": self.prompt,
+            "output_mode": self.output_mode,
         }
 
     @property
@@ -119,6 +149,62 @@ def problem_statement(problem: Mapping[str, Any]) -> str:
         if value:
             return str(value)
     return str(problem)
+
+
+def format_upstream_context(inputs: Mapping[str, GraphMessage]) -> str:
+    """Format predecessor messages without exposing internal graph schemas."""
+
+    if not inputs:
+        return ""
+    lines = ["Upstream context:"]
+    for node_id, message in inputs.items():
+        lines.append(f"- {node_id} ({message.role}):")
+        if message.answer is not None:
+            lines.append(f"  answer: {message.answer}")
+        if message.content.strip():
+            lines.append(f"  content: {short_text(message.content, 600)}")
+    return "\n".join(lines)
+
+
+def latest_parseable_answer(
+    problem: Mapping[str, Any],
+    inputs: Mapping[str, GraphMessage],
+) -> str:
+    """Return the latest upstream answer after strict normalization."""
+
+    answer = latest_answer(inputs)
+    if answer is None:
+        raise RuntimeError("no upstream answer available to normalize")
+    return parse_answer_text(str(answer), problem)
+
+
+def llm_metadata(response: LLMTextResponse) -> dict[str, Any]:
+    """Return provider metadata for one raw-text LLM call."""
+
+    return {
+        "model": response.model,
+        "usage": response.usage.to_dict(),
+        "latency_seconds": response.latency_seconds,
+    }
+
+
+def aggregate_llm_metadata(responses: list[tuple[str, LLMTextResponse]]) -> dict[str, Any]:
+    """Return aggregate metadata for a multi-call agent."""
+
+    usage = {
+        "prompt_tokens": sum(response.usage.prompt_tokens for _, response in responses),
+        "completion_tokens": sum(response.usage.completion_tokens for _, response in responses),
+        "total_tokens": sum(response.usage.total_tokens for _, response in responses),
+    }
+    return {
+        "model": responses[-1][1].model,
+        "usage": usage,
+        "latency_seconds": sum(response.latency_seconds for _, response in responses),
+        "calls": [
+            {"phase": phase, **llm_metadata(response)}
+            for phase, response in responses
+        ],
+    }
 
 
 def short_text(text: str, limit: int = 240) -> str:

@@ -1,4 +1,4 @@
-"""Strict LLM client for GraphMessage-producing agents."""
+"""Strict LLM client abstractions for graph agents."""
 
 from __future__ import annotations
 
@@ -56,6 +56,24 @@ class LLMJsonResponse:
 
 
 @dataclass(frozen=True)
+class LLMTextResponse:
+    """One raw-text model response."""
+
+    text: str
+    model: str
+    usage: LLMUsage
+    latency_seconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "model": self.model,
+            "usage": self.usage.to_dict(),
+            "latency_seconds": self.latency_seconds,
+        }
+
+
+@dataclass(frozen=True)
 class AgentContext:
     """Execution context passed from graph runtime to every Agent."""
 
@@ -69,7 +87,18 @@ class AgentContext:
 
 
 class LLMClient(ABC):
-    """Strict JSON LLM client used by production Agent execution."""
+    """LLM client used by production Agent execution."""
+
+    def chat_text(
+        self,
+        *,
+        role: str,
+        prompt: str,
+        instruction: str | None = None,
+    ) -> LLMTextResponse:
+        """Return one raw text response or raise an explicit error."""
+
+        raise NotImplementedError(f"{self.__class__.__name__} does not support chat_text")
 
     @abstractmethod
     def chat_json(
@@ -98,7 +127,7 @@ class LLMJsonError(LLMClientError):
 
 
 class OpenAICompatibleClient(LLMClient):
-    """OpenAI-compatible chat completions client with strict JSON parsing."""
+    """OpenAI-compatible chat completions client for text and JSON calls."""
 
     name = "openai_compatible"
 
@@ -165,6 +194,32 @@ class OpenAICompatibleClient(LLMClient):
             latency_seconds=time.monotonic() - started_at,
         )
 
+    def chat_text(
+        self,
+        *,
+        role: str,
+        prompt: str,
+        instruction: str | None = None,
+    ) -> LLMTextResponse:
+        started_at = time.monotonic()
+        request_payload = self._build_text_payload(
+            role=role,
+            prompt=prompt,
+            instruction=instruction,
+        )
+        try:
+            response = self._client.chat.completions.create(**request_payload)
+        except (APIConnectionError, APITimeoutError, APIError) as exc:
+            raise LLMClientError(
+                "chat completions request failed through openai SDK: "
+                f"{type(exc).__name__}: {_safe_error_message(exc)}"
+            ) from exc
+        return _parse_text_response(
+            response.model_dump(mode="json"),
+            default_model=self.model,
+            latency_seconds=time.monotonic() - started_at,
+        )
+
     def describe(self) -> Mapping[str, Any]:
         return {
             "name": self.name,
@@ -226,6 +281,34 @@ class OpenAICompatibleClient(LLMClient):
             request_payload["extra_body"] = {"thinking": {"type": self.thinking}}
         return request_payload
 
+    def _build_text_payload(
+        self,
+        *,
+        role: str,
+        prompt: str,
+        instruction: str | None = None,
+    ) -> dict[str, Any]:
+        user_content = prompt if instruction is None else f"{prompt}\n\n{instruction}"
+        request_payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are the {role} agent. Follow the requested output "
+                        "format exactly."
+                    ),
+                },
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": self.temperature,
+        }
+        if self.max_tokens is not None:
+            request_payload["max_tokens"] = self.max_tokens
+        if self.thinking is not None:
+            request_payload["extra_body"] = {"thinking": {"type": self.thinking}}
+        return request_payload
+
 
 def _parse_json_response(
     payload: Mapping[str, Any],
@@ -253,6 +336,36 @@ def _parse_json_response(
     return LLMJsonResponse(
         data=data,
         raw_text=text,
+        model=model if isinstance(model, str) else default_model,
+        usage=usage,
+        latency_seconds=latency_seconds,
+    )
+
+
+def _parse_text_response(
+    payload: Mapping[str, Any],
+    *,
+    default_model: str,
+    latency_seconds: float,
+) -> LLMTextResponse:
+    try:
+        choices = payload["choices"]
+        text = choices[0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMClientError("chat completions response is missing message content") from exc
+    if not isinstance(text, str):
+        raise LLMClientError("chat completions message content must be a string")
+    usage_payload = payload.get("usage", {})
+    if not isinstance(usage_payload, Mapping):
+        usage_payload = {}
+    usage = LLMUsage(
+        prompt_tokens=_usage_value(usage_payload, "prompt_tokens"),
+        completion_tokens=_usage_value(usage_payload, "completion_tokens"),
+        total_tokens=_usage_value(usage_payload, "total_tokens"),
+    )
+    model = payload.get("model", default_model)
+    return LLMTextResponse(
+        text=text,
         model=model if isinstance(model, str) else default_model,
         usage=usage,
         latency_seconds=latency_seconds,

@@ -18,7 +18,7 @@ from gogagent.graph.schema import GraphMessage
 from gogagent.llm import LLMClient, LLMJsonResponse, LLMUsage
 from gogagent.reward.oracle import OracleResult
 from train.BC.generate_trajectories import generate_one, step_rows_from_trajectory
-from train.BC.graph_factory import make_initial_graph
+from gogagent.graph.factory import make_initial_graph
 from train.BC.probe import SolverProbeResult
 from train.BC.teacher import TeacherTrajectoryClient
 from train.BC.trajectory import build_trajectory

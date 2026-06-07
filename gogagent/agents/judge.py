@@ -10,7 +10,7 @@ from gogagent.agents.base import Agent
 
 AGENT_PROMPT = (
     "Compare the challenge and defense fairly, then select the better final "
-    "answer. Return a GraphMessage JSON object."
+    "answer. Output only the final answer."
 )
 
 
@@ -25,3 +25,4 @@ class JudgeAgent(Agent):
     )
     standalone: ClassVar[bool] = False
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "answer"

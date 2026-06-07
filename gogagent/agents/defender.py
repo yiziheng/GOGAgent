@@ -10,7 +10,8 @@ from gogagent.agents.base import Agent
 
 AGENT_PROMPT = (
     "Respond to the challenge. Preserve the original answer if it is still "
-    "best, or revise it if the challenge is valid. Return a GraphMessage JSON object."
+    "best, or revise it if the challenge is valid. Output only the best final "
+    "candidate answer."
 )
 
 
@@ -25,3 +26,4 @@ class DefenderAgent(Agent):
     )
     standalone: ClassVar[bool] = False
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "candidate_answer"

@@ -6,6 +6,7 @@ from gogagent.llm.client import (
     LLMClientError,
     LLMJsonError,
     LLMJsonResponse,
+    LLMTextResponse,
     LLMUsage,
     OpenAICompatibleClient,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "LLMClientError",
     "LLMJsonError",
     "LLMJsonResponse",
+    "LLMTextResponse",
     "LLMUsage",
     "OpenAICompatibleClient",
 ]

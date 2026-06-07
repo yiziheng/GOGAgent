@@ -10,7 +10,8 @@ from gogagent.agents.base import Agent
 
 AGENT_PROMPT = (
     "Challenge the upstream answer. Look for incorrect assumptions, missing "
-    "evidence, or format risks. Return a GraphMessage JSON object."
+    "evidence, tempting distractors, or format risks. Do not output a final "
+    "answer; write a concise critique only."
 )
 
 
@@ -23,3 +24,4 @@ class ChallengerAgent(Agent):
     description: ClassVar[str] = "Challenges an answer and searches for weaknesses."
     standalone: ClassVar[bool] = False
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "text"

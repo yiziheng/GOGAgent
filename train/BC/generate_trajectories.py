@@ -18,8 +18,8 @@ if str(REPO_ROOT) not in sys.path:
 from gogagent.actions.base import ActionConstraints, ActionName
 from gogagent.config import llm_client_from_env
 from gogagent.datasets import DatasetExample
+from gogagent.graph.factory import make_initial_graph
 from train.BC.datasets import load_bc_examples
-from train.BC.graph_factory import make_initial_graph
 from train.BC.io_utils import JsonlWriter, TrajectorySummaryAccumulator, write_json
 from train.BC.probe import SolverProbeResult, run_solver_probe
 from train.BC.teacher import (

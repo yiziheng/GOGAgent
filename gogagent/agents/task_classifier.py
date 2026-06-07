@@ -10,7 +10,7 @@ from gogagent.agents.base import Agent
 
 AGENT_PROMPT = (
     "Identify the rough task type or required skill in a dataset-agnostic way. "
-    "Return a GraphMessage JSON object."
+    "Do not output a final answer."
 )
 
 
@@ -23,3 +23,4 @@ class TaskClassifierAgent(Agent):
     description: ClassVar[str] = "Identifies the rough task type or required skill."
     standalone: ClassVar[bool] = False
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "text"

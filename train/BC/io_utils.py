@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 import json
 
+from gogagent.artifacts import write_json, write_jsonl
+
 
 class JsonlWriter:
     """Streaming JSONL writer with a row counter."""
@@ -93,31 +95,6 @@ class TrajectorySummaryAccumulator:
             "style_distribution": dict(sorted(self.style_counts.items())),
             "valid_step_count": self.valid_step_count,
         }
-
-
-def write_jsonl(path: str | Path, rows: Iterable[Mapping[str, Any]]) -> int:
-    """Write rows as JSONL and return the row count."""
-
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with target.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
-            handle.write("\n")
-            count += 1
-    return count
-
-
-def write_json(path: str | Path, data: Mapping[str, Any]) -> None:
-    """Write one JSON object."""
-
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
 
 
 def summarize_trajectories(

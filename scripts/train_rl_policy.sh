@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+PYTHON="${PYTHON:-python}"
+CHECKPOINT=""
+DATASET="mmlu"
+DATA_PATH="${REPO_ROOT}/data/MMLU_subsets/train_test150/test"
+SPLIT="test"
+SELECTION_JSONL=""
+ENV_FILE="${REPO_ROOT}/.env"
+RUN_ID=""
+EPOCHS=1
+GROUP_SIZE=4
+MAX_ACTIONS=6
+TEMPERATURE=1.0
+KL_BETA=0.01
+LR=0.00001
+DEVICE="cpu"
+TASK_ENCODER_DEVICE=""
+LIMIT=""
+NO_ITEM_ARTIFACTS=0
+NO_PROGRESS=0
+OVERWRITE=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bash scripts/train_rl_policy.sh --checkpoint PATH [options]
+
+Refine a GOG graph-construction policy with GRPO-style RL.
+
+Common options:
+  --checkpoint PATH          Required base BC/RL policy checkpoint
+  --data-path PATH           Default: data/MMLU_subsets/train_test150/test
+  --split NAME               Default: test
+  --run-id ID                Output run id
+  --epochs N                 Default: 1
+  --group-size K             Rollouts per problem. Default: 4
+  --lr FLOAT                 Default: 0.00001
+  --kl-beta FLOAT            Default: 0.01
+  --temperature FLOAT        Sampling temperature. Default: 1.0
+  --device DEVICE            Torch policy device. Default: cpu
+  --task-encoder-device D    Optional SentenceTransformer device
+  --limit N                  Train on first N examples only
+  --no-item-artifacts        Do not save per-rollout gog.json/gog.svg
+  --no-progress              Disable tqdm progress output
+  --overwrite                Replace existing output run directories
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --checkpoint)
+      CHECKPOINT="$2"
+      shift 2
+      ;;
+    --dataset)
+      DATASET="$2"
+      shift 2
+      ;;
+    --data-path)
+      DATA_PATH="$2"
+      shift 2
+      ;;
+    --split)
+      SPLIT="$2"
+      shift 2
+      ;;
+    --selection-jsonl)
+      SELECTION_JSONL="$2"
+      shift 2
+      ;;
+    --env)
+      ENV_FILE="$2"
+      shift 2
+      ;;
+    --run-id)
+      RUN_ID="$2"
+      shift 2
+      ;;
+    --epochs)
+      EPOCHS="$2"
+      shift 2
+      ;;
+    --group-size)
+      GROUP_SIZE="$2"
+      shift 2
+      ;;
+    --max-actions)
+      MAX_ACTIONS="$2"
+      shift 2
+      ;;
+    --temperature)
+      TEMPERATURE="$2"
+      shift 2
+      ;;
+    --kl-beta)
+      KL_BETA="$2"
+      shift 2
+      ;;
+    --lr)
+      LR="$2"
+      shift 2
+      ;;
+    --device)
+      DEVICE="$2"
+      shift 2
+      ;;
+    --task-encoder-device)
+      TASK_ENCODER_DEVICE="$2"
+      shift 2
+      ;;
+    --limit)
+      LIMIT="$2"
+      shift 2
+      ;;
+    --no-item-artifacts)
+      NO_ITEM_ARTIFACTS=1
+      shift
+      ;;
+    --no-progress)
+      NO_PROGRESS=1
+      shift
+      ;;
+    --overwrite)
+      OVERWRITE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "${CHECKPOINT}" ]]; then
+  echo "missing required --checkpoint PATH" >&2
+  usage >&2
+  exit 2
+fi
+if [[ ! -f "${CHECKPOINT}" ]]; then
+  echo "checkpoint does not exist: ${CHECKPOINT}" >&2
+  exit 1
+fi
+if [[ ! -e "${DATA_PATH}" ]]; then
+  echo "data path does not exist: ${DATA_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "missing .env file: ${ENV_FILE}" >&2
+  exit 1
+fi
+
+CMD=(
+  "${PYTHON}" -m train.RL.train_grpo
+  --checkpoint "${CHECKPOINT}"
+  --dataset "${DATASET}"
+  --data-path "${DATA_PATH}"
+  --split "${SPLIT}"
+  --env "${ENV_FILE}"
+  --epochs "${EPOCHS}"
+  --group-size "${GROUP_SIZE}"
+  --max-actions "${MAX_ACTIONS}"
+  --temperature "${TEMPERATURE}"
+  --kl-beta "${KL_BETA}"
+  --lr "${LR}"
+  --device "${DEVICE}"
+)
+if [[ -n "${SELECTION_JSONL}" ]]; then
+  CMD+=(--selection-jsonl "${SELECTION_JSONL}")
+fi
+if [[ -n "${RUN_ID}" ]]; then
+  CMD+=(--run-id "${RUN_ID}")
+fi
+if [[ -n "${TASK_ENCODER_DEVICE}" ]]; then
+  CMD+=(--task-encoder-device "${TASK_ENCODER_DEVICE}")
+fi
+if [[ -n "${LIMIT}" ]]; then
+  CMD+=(--limit "${LIMIT}")
+fi
+if [[ "${NO_ITEM_ARTIFACTS}" -eq 1 ]]; then
+  CMD+=(--no-item-artifacts)
+fi
+if [[ "${NO_PROGRESS}" -eq 1 ]]; then
+  CMD+=(--no-progress)
+fi
+if [[ "${OVERWRITE}" -eq 1 ]]; then
+  CMD+=(--overwrite)
+fi
+
+echo "[train-rl] checkpoint=${CHECKPOINT}"
+echo "[train-rl] data=${DATA_PATH}"
+echo "[train-rl] dataset=${DATASET} split=${SPLIT}"
+echo "[train-rl] group_size=${GROUP_SIZE} epochs=${EPOCHS}"
+PYTHONUNBUFFERED=1 "${CMD[@]}"

@@ -159,16 +159,29 @@ def execute_node(
     output.sender = node.node_id
     if not output.role:
         output.role = node.name
-    if context is not None and output.metadata.get("llm"):
-        context.record_llm_call(
-            {
-                "node_id": node.node_id,
-                "node_name": node.name,
-                "role": output.role,
-                "agent_type": output.metadata.get("agent_type"),
-                "llm": output.metadata["llm"],
-            }
-        )
+    if context is not None:
+        llm_calls = output.metadata.get("llm_calls")
+        if isinstance(llm_calls, list):
+            for call in llm_calls:
+                context.record_llm_call(
+                    {
+                        "node_id": node.node_id,
+                        "node_name": node.name,
+                        "role": output.role,
+                        "agent_type": output.metadata.get("agent_type"),
+                        "llm": call,
+                    }
+                )
+        elif output.metadata.get("llm"):
+            context.record_llm_call(
+                {
+                    "node_id": node.node_id,
+                    "node_name": node.name,
+                    "role": output.role,
+                    "agent_type": output.metadata.get("agent_type"),
+                    "llm": output.metadata["llm"],
+                }
+            )
     return output
 
 

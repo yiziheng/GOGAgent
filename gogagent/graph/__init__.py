@@ -1,6 +1,7 @@
 """Graph-of-Graphs runtime primitives."""
 
 from gogagent.graph.executor import GraphExecutionError, execute_graph, execute_node
+from gogagent.graph.factory import make_initial_graph
 from gogagent.graph.schema import Edge, Graph, GraphMessage, Node
 from gogagent.graph.serializer import (
     graph_from_dict,
@@ -16,6 +17,7 @@ __all__ = [
     "Graph",
     "GraphExecutionError",
     "GraphMessage",
+    "make_initial_graph",
     "Node",
     "execute_graph",
     "execute_node",

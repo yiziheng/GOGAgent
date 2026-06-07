@@ -16,12 +16,44 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from gogagent.artifacts import RunRecorder
-from gogagent.llm import AgentContext, LLMClient, LLMJsonResponse, LLMUsage
+from gogagent.llm import (
+    AgentContext,
+    LLMClient,
+    LLMJsonResponse,
+    LLMTextResponse,
+    LLMUsage,
+)
 from gogagent.reward import check_output_format, compute_reward
 
 
 class ScriptedLLMClient(LLMClient):
     """Explicit test LLM client for smoke checks."""
+
+    def chat_text(
+        self,
+        *,
+        role: str,
+        prompt: str,
+        instruction: str | None = None,
+    ) -> LLMTextResponse:
+        del prompt, instruction
+        if role in {
+            "solver",
+            "defender",
+            "judge",
+            "adversarial_judge",
+            "format_verifier",
+            "answer_normalizer",
+        }:
+            text = "A"
+        else:
+            text = f"{role} produced a scripted context response."
+        return LLMTextResponse(
+            text=text,
+            model="scripted-test-client",
+            usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            latency_seconds=0.0,
+        )
 
     def chat_json(
         self,
@@ -29,8 +61,10 @@ class ScriptedLLMClient(LLMClient):
         role: str,
         prompt: str,
         payload: Mapping[str, Any],
+        response_schema: Mapping[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LLMJsonResponse:
-        del prompt
+        del prompt, response_schema, instruction
         data = {
             "role": role,
             "content": f"{role} produced a structured test response.",

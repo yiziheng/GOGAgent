@@ -9,8 +9,8 @@ from gogagent.agents.base import Agent
 
 
 AGENT_PROMPT = (
-    "Create a compact one-sentence task brief for downstream agents. Return a "
-    "GraphMessage JSON object."
+    "Create a compact one-sentence task brief for downstream agents. Do not "
+    "output a final answer."
 )
 
 
@@ -23,3 +23,4 @@ class TaskBriefAgent(Agent):
     description: ClassVar[str] = "Summarizes what the problem is asking in one sentence."
     standalone: ClassVar[bool] = True
     prompt: ClassVar[str] = AGENT_PROMPT
+    output_mode: ClassVar[str] = "text"

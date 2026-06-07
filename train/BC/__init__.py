@@ -1,6 +1,7 @@
 """Behavior cloning trajectory generation utilities."""
 
-from train.BC.graph_factory import make_initial_graph
+from gogagent.graph.factory import make_initial_graph
+from train.BC.step_dataset import BCStepDataset, BCStepExample
 from train.BC.teacher import (
     DEFAULT_TEACHER_STYLES,
     TeacherActionProposal,
@@ -13,6 +14,8 @@ from train.BC.trajectory import (
 )
 
 __all__ = [
+    "BCStepDataset",
+    "BCStepExample",
     "DEFAULT_TEACHER_STYLES",
     "TeacherActionProposal",
     "TeacherTrajectoryClient",
