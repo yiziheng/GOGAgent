@@ -9,6 +9,8 @@ import time
 from typing import Any, Mapping
 from urllib import parse
 
+from gogagent.prompt import default_text_system_prompt, json_system_prompt
+
 
 try:
     from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
@@ -44,6 +46,7 @@ class LLMJsonResponse:
     model: str
     usage: LLMUsage
     latency_seconds: float
+    request_messages: tuple[dict[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +66,7 @@ class LLMTextResponse:
     model: str
     usage: LLMUsage
     latency_seconds: float
+    request_messages: tuple[dict[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,11 +83,17 @@ class AgentContext:
 
     llm_client: "LLMClient"
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
+    llm_audit: list[dict[str, Any]] = field(default_factory=list)
 
     def record_llm_call(self, event: Mapping[str, Any]) -> None:
         """Record one node-level LLM call for audit artifacts."""
 
         self.llm_calls.append(dict(event))
+
+    def record_llm_audit(self, event: Mapping[str, Any]) -> None:
+        """Record one full LLM request/response audit event."""
+
+        self.llm_audit.append(dict(event))
 
 
 class LLMClient(ABC):
@@ -94,6 +104,7 @@ class LLMClient(ABC):
         *,
         role: str,
         prompt: str,
+        system_prompt: str | None = None,
         instruction: str | None = None,
     ) -> LLMTextResponse:
         """Return one raw text response or raise an explicit error."""
@@ -192,6 +203,7 @@ class OpenAICompatibleClient(LLMClient):
             response.model_dump(mode="json"),
             default_model=self.model,
             latency_seconds=time.monotonic() - started_at,
+            request_messages=_request_messages(request_payload),
         )
 
     def chat_text(
@@ -199,12 +211,14 @@ class OpenAICompatibleClient(LLMClient):
         *,
         role: str,
         prompt: str,
+        system_prompt: str | None = None,
         instruction: str | None = None,
     ) -> LLMTextResponse:
         started_at = time.monotonic()
         request_payload = self._build_text_payload(
             role=role,
             prompt=prompt,
+            system_prompt=system_prompt,
             instruction=instruction,
         )
         try:
@@ -218,6 +232,7 @@ class OpenAICompatibleClient(LLMClient):
             response.model_dump(mode="json"),
             default_model=self.model,
             latency_seconds=time.monotonic() - started_at,
+            request_messages=_request_messages(request_payload),
         )
 
     def describe(self) -> Mapping[str, Any]:
@@ -263,10 +278,7 @@ class OpenAICompatibleClient(LLMClient):
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        f"You are the {role} agent in a graph-of-graphs multi-agent system. "
-                        "You must return a strict JSON object."
-                    ),
+                    "content": json_system_prompt(role),
                 },
                 {
                     "role": "user",
@@ -286,6 +298,7 @@ class OpenAICompatibleClient(LLMClient):
         *,
         role: str,
         prompt: str,
+        system_prompt: str | None = None,
         instruction: str | None = None,
     ) -> dict[str, Any]:
         user_content = prompt if instruction is None else f"{prompt}\n\n{instruction}"
@@ -294,10 +307,7 @@ class OpenAICompatibleClient(LLMClient):
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        f"You are the {role} agent. Follow the requested output "
-                        "format exactly."
-                    ),
+                    "content": system_prompt or default_text_system_prompt(role),
                 },
                 {"role": "user", "content": user_content},
             ],
@@ -315,6 +325,7 @@ def _parse_json_response(
     *,
     default_model: str,
     latency_seconds: float,
+    request_messages: tuple[dict[str, str], ...] = (),
 ) -> LLMJsonResponse:
     try:
         choices = payload["choices"]
@@ -339,6 +350,7 @@ def _parse_json_response(
         model=model if isinstance(model, str) else default_model,
         usage=usage,
         latency_seconds=latency_seconds,
+        request_messages=request_messages,
     )
 
 
@@ -347,6 +359,7 @@ def _parse_text_response(
     *,
     default_model: str,
     latency_seconds: float,
+    request_messages: tuple[dict[str, str], ...] = (),
 ) -> LLMTextResponse:
     try:
         choices = payload["choices"]
@@ -369,7 +382,23 @@ def _parse_text_response(
         model=model if isinstance(model, str) else default_model,
         usage=usage,
         latency_seconds=latency_seconds,
+        request_messages=request_messages,
     )
+
+
+def _request_messages(request_payload: Mapping[str, Any]) -> tuple[dict[str, str], ...]:
+    messages = request_payload.get("messages")
+    if not isinstance(messages, list):
+        return ()
+    normalized: list[dict[str, str]] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if isinstance(role, str) and isinstance(content, str):
+            normalized.append({"role": role, "content": content})
+    return tuple(normalized)
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

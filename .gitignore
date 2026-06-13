@@ -4,7 +4,15 @@ __pycache__/
 *.egg-info/
 .env
 .env.*
+!.env.example
 /artifacts/
 /docs/
 data/
 models/
+/tests/
+/experiment/
+/logs/
+/outputs/
+/runs/
+/records/
+/CODEBASE_OVERVIEW.md

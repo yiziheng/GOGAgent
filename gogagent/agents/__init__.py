@@ -8,6 +8,7 @@ from gogagent.agents.defender import DefenderAgent
 from gogagent.agents.format_checker import FormatCheckerAgent
 from gogagent.agents.format_verifier import FormatVerifierAgent
 from gogagent.agents.judge import JudgeAgent
+from gogagent.agents.mmlu_shuffle import MMLUMajorityVoteAgent, ShuffledMMLUSolverAgent
 from gogagent.agents.plan_sketch import PlanSketchAgent
 from gogagent.agents.registry import (
     agent_from_dict,
@@ -18,6 +19,7 @@ from gogagent.agents.registry import (
     list_agent_specs,
 )
 from gogagent.agents.solver import SolverAgent
+from gogagent.agents.supervisor import SupervisorAgent
 from gogagent.agents.task_brief import TaskBriefAgent
 from gogagent.agents.task_classifier import TaskClassifierAgent
 
@@ -30,8 +32,11 @@ __all__ = [
     "FormatCheckerAgent",
     "FormatVerifierAgent",
     "JudgeAgent",
+    "MMLUMajorityVoteAgent",
     "PlanSketchAgent",
+    "ShuffledMMLUSolverAgent",
     "SolverAgent",
+    "SupervisorAgent",
     "TaskBriefAgent",
     "TaskClassifierAgent",
     "agent_from_dict",

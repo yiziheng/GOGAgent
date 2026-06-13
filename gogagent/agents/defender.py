@@ -8,13 +8,6 @@ from typing import ClassVar
 from gogagent.agents.base import Agent
 
 
-AGENT_PROMPT = (
-    "Respond to the challenge. Preserve the original answer if it is still "
-    "best, or revise it if the challenge is valid. Output only the best final "
-    "candidate answer."
-)
-
-
 @dataclass
 class DefenderAgent(Agent):
     """UP-only answer defense prompt wrapper."""
@@ -25,5 +18,5 @@ class DefenderAgent(Agent):
         "Defends or revises the original answer in response to the challenge."
     )
     standalone: ClassVar[bool] = False
-    prompt: ClassVar[str] = AGENT_PROMPT
+    prompt_key: ClassVar[str] = "defender"
     output_mode: ClassVar[str] = "candidate_answer"

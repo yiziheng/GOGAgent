@@ -16,6 +16,7 @@ EPOCHS=1
 GROUP_SIZE=4
 MAX_ACTIONS=6
 TEMPERATURE=1.0
+REWARD_MODE="dense"
 KL_BETA=0.01
 LR=0.00001
 DEVICE="cpu"
@@ -42,6 +43,7 @@ Common options:
   --lr FLOAT                 Default: 0.00001
   --kl-beta FLOAT            Default: 0.01
   --temperature FLOAT        Sampling temperature. Default: 1.0
+  --reward-mode MODE         dense|answer_only. Default: dense
   --device DEVICE            Torch policy device. Default: cpu
   --task-encoder-device D    Optional SentenceTransformer device
   --limit N                  Train on first N examples only
@@ -95,6 +97,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --temperature)
       TEMPERATURE="$2"
+      shift 2
+      ;;
+    --reward-mode)
+      REWARD_MODE="$2"
       shift 2
       ;;
     --kl-beta)
@@ -170,6 +176,7 @@ CMD=(
   --group-size "${GROUP_SIZE}"
   --max-actions "${MAX_ACTIONS}"
   --temperature "${TEMPERATURE}"
+  --reward-mode "${REWARD_MODE}"
   --kl-beta "${KL_BETA}"
   --lr "${LR}"
   --device "${DEVICE}"
@@ -199,5 +206,5 @@ fi
 echo "[train-rl] checkpoint=${CHECKPOINT}"
 echo "[train-rl] data=${DATA_PATH}"
 echo "[train-rl] dataset=${DATASET} split=${SPLIT}"
-echo "[train-rl] group_size=${GROUP_SIZE} epochs=${EPOCHS}"
+echo "[train-rl] group_size=${GROUP_SIZE} epochs=${EPOCHS} reward_mode=${REWARD_MODE}"
 PYTHONUNBUFFERED=1 "${CMD[@]}"

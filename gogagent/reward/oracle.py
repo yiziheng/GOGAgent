@@ -85,6 +85,8 @@ def score_answer(
             correct = _score_gsm8k(prediction, gold_value)
         elif dataset_name == "humaneval":
             correct = _score_humaneval(example, prediction, gold_value)
+        elif dataset_name == "multiagentbench":
+            correct = _score_multiagentbench(example, prediction, gold_value)
         else:
             correct = str(prediction).strip() == str(gold_value).strip()
     except Exception as error:  # noqa: BLE001 - oracle failures become wrong, not format failures.
@@ -121,6 +123,8 @@ def extract_gold(example: Mapping[str, Any], gold: Any | None = None) -> Any | N
         "final_answer",
         "canonical_answer",
         "expected",
+        "reference",
+        "solution",
     ):
         if key in example:
             return example[key]
@@ -151,6 +155,36 @@ def _score_gsm8k(prediction: Any, gold: Any) -> bool:
     predicted_value = _normalized_numeric(prediction)
     gold_value = _normalized_numeric(_gold_text(gold))
     return predicted_value is not None and predicted_value == gold_value
+
+
+def _score_multiagentbench(example: Mapping[str, Any], prediction: Any, gold: Any) -> bool:
+    if isinstance(gold, list):
+        return any(_score_multiagentbench(example, prediction, candidate) for candidate in gold)
+
+    options = example.get("options") or example.get("choices")
+    if isinstance(options, Mapping):
+        try:
+            return _extract_mmlu_option(prediction) == _extract_mmlu_option(gold)
+        except ValueError:
+            pass
+
+    metric = str(
+        example.get("metric")
+        or example.get("answer_type")
+        or example.get("eval_metric")
+        or ""
+    ).strip().lower()
+    if metric in {"number", "numeric", "math", "gsm8k"}:
+        return _score_gsm8k(prediction, gold)
+    return _normalize_exact_text(prediction) == _normalize_exact_text(gold)
+
+
+def _normalize_exact_text(value: Any) -> str:
+    text = str(value).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"^[\"'`]+|[\"'`]+$", "", text)
+    text = re.sub(r"[\.。]+$", "", text)
+    return text.strip()
 
 
 def _normalized_numeric(text: Any) -> Fraction | None:

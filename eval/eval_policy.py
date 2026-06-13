@@ -79,7 +79,8 @@ def main() -> None:
             max_actions=args.max_actions,
             temperature=args.temperature,
             construct_only=args.construct_only,
-            save_item_artifacts=not args.no_item_artifacts,
+            save_item_artifacts=args.debug_artifacts and not args.no_item_artifacts,
+            mmlu_brief_rationale=args.mmlu_brief_rationale,
         )
         rows.append(row)
         iterator.set_postfix(
@@ -124,8 +125,10 @@ def main() -> None:
             "max_depth": args.max_depth,
             "max_nodes": args.max_nodes,
             "temperature": args.temperature,
+            "mmlu_brief_rationale": args.mmlu_brief_rationale,
         },
         backend=client.describe() if client is not None else None,
+        include_debug=args.debug_artifacts,
     )
     write_json(run_dir / "summary.json", summary)
     write_jsonl(run_dir / "results.jsonl", rows)
@@ -154,8 +157,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-nodes", type=int, default=8)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--mmlu-brief-rationale",
+        action="store_true",
+        help=(
+            "Ask MMLU solver-style agents to return Answer/Reason/Risk while "
+            "keeping GraphMessage.answer as one parsed option letter."
+        ),
+    )
     parser.add_argument("--construct-only", action="store_true")
-    parser.add_argument("--no-item-artifacts", action="store_true")
+    parser.add_argument(
+        "--debug-artifacts",
+        action="store_true",
+        help="Save per-item gog.json/gog.svg/trace/summary and verbose debug fields.",
+    )
+    parser.add_argument(
+        "--no-item-artifacts",
+        action="store_true",
+        help="Deprecated compatibility flag; per-item artifacts are disabled by default.",
+    )
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -174,6 +194,7 @@ def run_one(
     temperature: float,
     construct_only: bool,
     save_item_artifacts: bool,
+    mmlu_brief_rationale: bool,
 ) -> dict[str, Any]:
     public_task = dict(example.public_task)
     task_id = str(public_task.get("task_id", f"item-{index}"))
@@ -196,7 +217,12 @@ def run_one(
         run_dir=run_dir,
         construct_only=construct_only,
         save_item_artifacts=save_item_artifacts,
-        extra_base={"policy": construction},
+        extra_base={"policy": construction} if save_item_artifacts else None,
+        problem_overrides=(
+            {"mmlu_agent_output_style": "brief_rationale"}
+            if mmlu_brief_rationale
+            else None
+        ),
     )
 
 

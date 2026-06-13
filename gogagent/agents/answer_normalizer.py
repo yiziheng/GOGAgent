@@ -10,11 +10,6 @@ from gogagent.graph.schema import GraphMessage
 from gogagent.llm.client import AgentContext
 
 
-AGENT_PROMPT = (
-    "Convert the best available answer into the expected final answer string."
-)
-
-
 @dataclass
 class AnswerNormalizerAgent(Agent):
     """UP-only answer normalization prompt wrapper."""
@@ -23,7 +18,7 @@ class AnswerNormalizerAgent(Agent):
     role: ClassVar[str] = "answer_normalizer"
     description: ClassVar[str] = "Converts the answer into the expected final format."
     standalone: ClassVar[bool] = False
-    prompt: ClassVar[str] = AGENT_PROMPT
+    prompt_key: ClassVar[str] = "answer_normalizer"
     output_mode: ClassVar[str] = "answer"
 
     def execute(

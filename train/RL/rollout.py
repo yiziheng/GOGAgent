@@ -19,7 +19,7 @@ from gogagent.llm import AgentContext
 from gogagent.policy import GraphEncoder, PolicyNetwork
 from gogagent.reward import check_output_format
 from train.RL.buffer import RolloutStep, TrajectoryRollout
-from train.RL.rewards import compute_rl_reward
+from train.RL.rewards import RewardMode, compute_rl_reward
 from train.RL.sampler import sample_action_step
 
 
@@ -39,6 +39,7 @@ def rollout_group(
     group_size: int,
     max_actions: int,
     temperature: float,
+    reward_mode: RewardMode,
     save_item_artifacts: bool,
     generator: torch.Generator | None = None,
 ) -> list[TrajectoryRollout]:
@@ -60,6 +61,7 @@ def rollout_group(
             constraints=constraints,
             max_actions=max_actions,
             temperature=temperature,
+            reward_mode=reward_mode,
             save_item_artifacts=save_item_artifacts,
             generator=generator,
         )
@@ -83,6 +85,7 @@ def run_one_rollout(
     constraints: ActionConstraints,
     max_actions: int,
     temperature: float,
+    reward_mode: RewardMode,
     save_item_artifacts: bool,
     generator: torch.Generator | None,
 ) -> TrajectoryRollout:
@@ -183,6 +186,7 @@ def run_one_rollout(
             gold=example.gold,
             final_output=output,
             action_records=action_records,
+            reward_mode=reward_mode,
         )
         recorder.record_trace(
             {
@@ -229,6 +233,7 @@ def run_one_rollout(
             gold=example.gold,
             final_output=output,
             action_records=action_records,
+            reward_mode=reward_mode,
         )
         recorder.record_trace(
             {

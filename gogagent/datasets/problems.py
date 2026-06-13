@@ -34,6 +34,11 @@ def answer_format_for_dataset(dataset: str) -> str:
         return "The GraphMessage answer field must contain only the final numeric answer."
     if dataset_name == "humaneval":
         return "The GraphMessage answer field must contain the final Python solution code."
+    if dataset_name == "multiagentbench":
+        return (
+            "The GraphMessage answer field must contain the final answer or "
+            "deliverable requested by the MultiAgentBench task."
+        )
     raise AssertionError(f"unhandled dataset: {dataset_name}")
 
 

@@ -8,12 +8,6 @@ from typing import ClassVar
 from gogagent.agents.base import Agent
 
 
-AGENT_PROMPT = (
-    "Create a compact one-sentence task brief for downstream agents. Do not "
-    "output a final answer."
-)
-
-
 @dataclass
 class TaskBriefAgent(Agent):
     """One-sentence task briefing prompt wrapper."""
@@ -22,5 +16,5 @@ class TaskBriefAgent(Agent):
     role: ClassVar[str] = "task_brief"
     description: ClassVar[str] = "Summarizes what the problem is asking in one sentence."
     standalone: ClassVar[bool] = True
-    prompt: ClassVar[str] = AGENT_PROMPT
+    prompt_key: ClassVar[str] = "task_brief"
     output_mode: ClassVar[str] = "text"

@@ -34,6 +34,7 @@ from gogagent.policy import (  # noqa: E402
 )
 from train.RL.logging import append_jsonl, write_json  # noqa: E402
 from train.RL.losses import compute_group_advantages, grpo_rollout_loss  # noqa: E402
+from train.RL.rewards import REWARD_MODES, RewardMode  # noqa: E402
 from train.RL.rollout import rollout_group  # noqa: E402
 from train.checkpoint import (  # noqa: E402
     load_policy_components,
@@ -82,6 +83,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-depth", type=int, default=2)
     parser.add_argument("--max-nodes", type=int, default=8)
     parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument(
+        "--reward-mode",
+        choices=REWARD_MODES,
+        default="dense",
+        help=(
+            "RL reward source. 'dense' uses correctness, format, validity, and "
+            "complexity; 'answer_only' uses only final-answer correctness."
+        ),
+    )
     parser.add_argument("--kl-beta", type=float, default=0.01)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight-decay", type=float, default=0.0)
@@ -171,6 +181,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             group_size=args.group_size,
             max_actions=args.max_actions,
             temperature=args.temperature,
+            reward_mode=args.reward_mode,
             kl_beta=args.kl_beta,
             grad_clip=args.grad_clip,
             seed=args.seed,
@@ -221,6 +232,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "num_examples": len(prepared_examples),
         "epochs": args.epochs,
         "group_size": args.group_size,
+        "reward_mode": args.reward_mode,
         "device": str(device),
         "task_encoder_model": task_encoder.model_name,
         "action_space": [action.value for action in ACTION_SPACE],
@@ -253,6 +265,7 @@ def train_one_epoch(
     group_size: int,
     max_actions: int,
     temperature: float,
+    reward_mode: RewardMode,
     kl_beta: float,
     grad_clip: float,
     seed: int,
@@ -304,6 +317,7 @@ def train_one_epoch(
             group_size=group_size,
             max_actions=max_actions,
             temperature=temperature,
+            reward_mode=reward_mode,
             save_item_artifacts=save_item_artifacts,
         )
         rewards = [rollout.reward for rollout in rollouts]
@@ -475,6 +489,7 @@ def make_output_config(
         "max_depth": args.max_depth,
         "max_nodes": args.max_nodes,
         "temperature": args.temperature,
+        "reward_mode": args.reward_mode,
         "kl_beta": args.kl_beta,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
@@ -512,6 +527,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("max_nodes must be positive")
     if args.temperature <= 0:
         raise ValueError("temperature must be positive")
+    if args.reward_mode not in REWARD_MODES:
+        raise ValueError(f"reward_mode must be one of {REWARD_MODES!r}")
     if args.kl_beta < 0:
         raise ValueError("kl_beta must be non-negative")
     if args.lr <= 0:

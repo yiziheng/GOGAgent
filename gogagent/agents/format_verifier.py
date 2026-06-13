@@ -10,12 +10,6 @@ from gogagent.graph.schema import GraphMessage
 from gogagent.llm.client import AgentContext
 
 
-AGENT_PROMPT = (
-    "Check whether the final message exposes a parseable answer field and "
-    "normalize the answer when possible."
-)
-
-
 @dataclass
 class FormatVerifierAgent(Agent):
     """Final format verification prompt wrapper."""
@@ -24,7 +18,7 @@ class FormatVerifierAgent(Agent):
     role: ClassVar[str] = "format_verifier"
     description: ClassVar[str] = "Checks output format and normalizes the final answer."
     standalone: ClassVar[bool] = True
-    prompt: ClassVar[str] = AGENT_PROMPT
+    prompt_key: ClassVar[str] = "format_verifier"
     output_mode: ClassVar[str] = "answer"
 
     def execute(

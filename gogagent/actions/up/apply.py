@@ -17,7 +17,6 @@ from gogagent.actions.base import (
 _UP_MODULES: dict[str, str] = {
     "solver": "gogagent.actions.up.solver",
     "adversarial_judge": "gogagent.actions.up.adversarial_judge",
-    "format_verifier": "gogagent.actions.up.format_verifier",
     "task_brief": "gogagent.actions.up.task_brief",
     "plan_sketch": "gogagent.actions.up.plan_sketch",
 }
