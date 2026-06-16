@@ -61,7 +61,11 @@ def main() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--dataset", default="mmlu", choices=("mmlu", "gsm8k", "humaneval"))
+    parser.add_argument(
+        "--dataset",
+        default="mmlu",
+        choices=("mmlu", "mmlu_pro", "gsm8k", "humaneval"),
+    )
     parser.add_argument("--data-path", type=Path, required=True)
     parser.add_argument("--split", default="test")
     parser.add_argument("--selection-jsonl", type=Path, default=None)

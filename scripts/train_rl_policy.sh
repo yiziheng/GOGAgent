@@ -7,14 +7,16 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON="${PYTHON:-python}"
 CHECKPOINT=""
 DATASET="mmlu"
-DATA_PATH="${REPO_ROOT}/data/MMLU_subsets/train_test150/test"
-SPLIT="test"
+DATA_PATH=""
+SPLIT=""
 SELECTION_JSONL=""
 ENV_FILE="${REPO_ROOT}/.env"
 RUN_ID=""
 EPOCHS=1
 GROUP_SIZE=4
 MAX_ACTIONS=6
+MAX_DEPTH=2
+MAX_NODES=8
 TEMPERATURE=1.0
 REWARD_MODE="dense"
 KL_BETA=0.01
@@ -35,11 +37,15 @@ Refine a GOG graph-construction policy with GRPO-style RL.
 
 Common options:
   --checkpoint PATH          Required base BC/RL policy checkpoint
-  --data-path PATH           Default: data/MMLU_subsets/train_test150/test
-  --split NAME               Default: test
+  --dataset NAME             mmlu|mmlu_pro|gsm8k|humaneval. Default: mmlu
+  --data-path PATH           Dataset path. Defaults exist for mmlu and mmlu_pro
+  --split NAME               Dataset split. Default: test for mmlu, train for mmlu_pro
   --run-id ID                Output run id
   --epochs N                 Default: 1
   --group-size K             Rollouts per problem. Default: 4
+  --max-actions N            Default: 6
+  --max-depth N              Default: 2
+  --max-nodes N              Default: 8
   --lr FLOAT                 Default: 0.00001
   --kl-beta FLOAT            Default: 0.01
   --temperature FLOAT        Sampling temperature. Default: 1.0
@@ -93,6 +99,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-actions)
       MAX_ACTIONS="$2"
+      shift 2
+      ;;
+    --max-depth)
+      MAX_DEPTH="$2"
+      shift 2
+      ;;
+    --max-nodes)
+      MAX_NODES="$2"
       shift 2
       ;;
     --temperature)
@@ -152,6 +166,32 @@ if [[ -z "${CHECKPOINT}" ]]; then
   usage >&2
   exit 2
 fi
+case "${DATASET}" in
+  mmlupro)
+    DATASET="mmlu_pro"
+    ;;
+esac
+case "${DATASET}" in
+  mmlu)
+    DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/MMLU_subsets/train_test150/test}"
+    SPLIT="${SPLIT:-test}"
+    ;;
+  mmlu_pro)
+    DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/MMLU_Pro_subsets/train300}"
+    SPLIT="${SPLIT:-train}"
+    ;;
+  gsm8k|humaneval)
+    if [[ -z "${DATA_PATH}" ]]; then
+      echo "missing --data-path for dataset=${DATASET}" >&2
+      exit 2
+    fi
+    SPLIT="${SPLIT:-test}"
+    ;;
+  *)
+    echo "unsupported dataset: ${DATASET}" >&2
+    exit 2
+    ;;
+esac
 if [[ ! -f "${CHECKPOINT}" ]]; then
   echo "checkpoint does not exist: ${CHECKPOINT}" >&2
   exit 1
@@ -175,6 +215,8 @@ CMD=(
   --epochs "${EPOCHS}"
   --group-size "${GROUP_SIZE}"
   --max-actions "${MAX_ACTIONS}"
+  --max-depth "${MAX_DEPTH}"
+  --max-nodes "${MAX_NODES}"
   --temperature "${TEMPERATURE}"
   --reward-mode "${REWARD_MODE}"
   --kl-beta "${KL_BETA}"
@@ -207,4 +249,5 @@ echo "[train-rl] checkpoint=${CHECKPOINT}"
 echo "[train-rl] data=${DATA_PATH}"
 echo "[train-rl] dataset=${DATASET} split=${SPLIT}"
 echo "[train-rl] group_size=${GROUP_SIZE} epochs=${EPOCHS} reward_mode=${REWARD_MODE}"
+echo "[train-rl] max_actions=${MAX_ACTIONS} max_depth=${MAX_DEPTH} max_nodes=${MAX_NODES}"
 PYTHONUNBUFFERED=1 "${CMD[@]}"

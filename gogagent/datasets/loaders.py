@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 
-SUPPORTED_DATASETS = ("mmlu", "gsm8k", "humaneval", "multiagentbench")
+SUPPORTED_DATASETS = ("mmlu", "mmlu_pro", "gsm8k", "humaneval", "multiagentbench")
 
 _MULTIAGENTBENCH_GOLD_KEYS = (
     "answer",
@@ -188,6 +188,11 @@ def load_examples(
     dataset_name = normalize_dataset(dataset)
     if dataset_name == "mmlu":
         iterator = load_mmlu_directory(data_path, split=split)
+    elif dataset_name == "mmlu_pro":
+        del split
+        from gogagent.datasets.mmlu_pro import load_mmlu_pro_jsonl
+
+        iterator = load_mmlu_pro_jsonl(data_path)
     elif dataset_name == "gsm8k":
         iterator = load_gsm8k_jsonl(data_path)
     elif dataset_name == "humaneval":

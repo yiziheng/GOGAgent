@@ -19,7 +19,11 @@ EOF
 "${PYTHON}" -m gogagent.cli agents >/dev/null
 "${PYTHON}" -m gogagent.cli actions >/dev/null
 bash -n scripts/run_mmlu_bc_pipeline.sh
+bash -n scripts/run_mmlu_pro_bc_rl.sh
+bash -n scripts/train_bc_policy.sh
+bash -n scripts/train_rl_policy.sh
 bash scripts/run_mmlu_bc_pipeline.sh --help >/dev/null
+bash scripts/run_mmlu_pro_bc_rl.sh --help >/dev/null
 "${PYTHON}" tests/smoke_round1_refactor.py
 "${PYTHON}" tests/test_oracle_mmlu.py
 "${PYTHON}" tests/test_policy_graph_encoding.py

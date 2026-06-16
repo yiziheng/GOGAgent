@@ -15,7 +15,7 @@ INTERNAL_AGENT_NAMES = (
 
 
 def build_subgraph(target_node: Any) -> Any:
-    """Expand AdversarialJudgeAgent into two independent MMLU shuffled votes."""
+    """Expand AdversarialJudgeAgent into two independent shuffled-choice votes."""
 
     parent_id = node_id(target_node)
     vote_1 = f"{parent_id}_mmlu_shuffle_vote_1"
@@ -43,7 +43,7 @@ def build_subgraph(target_node: Any) -> Any:
         },
         edges=[make_edge(vote_1, voter), make_edge(vote_2, voter)],
         metadata={
-            "graph_type": "mmlu_shuffled_self_consistency",
+            "graph_type": "shuffled_choice_self_consistency",
             "created_by": "UP",
             "parent": parent_id,
         },

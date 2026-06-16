@@ -30,6 +30,7 @@ _MMLU_INLINE_OPTION_RE = re.compile(
 )
 
 MMLU_DIRECT_SYSTEM_PROMPT = MMLU_SOLVER_SYSTEM_PROMPT
+_CHOICE_LABELS = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
 class DatasetPromptSpec(ABC):
@@ -98,6 +99,47 @@ class MMLUPromptSpec(DatasetPromptSpec):
 
     def matches(self, problem: Mapping[str, Any]) -> bool:
         return _mmlu_options(problem) is not None
+
+
+@dataclass(frozen=True)
+class MMLUProPromptSpec(DatasetPromptSpec):
+    """MMLU-Pro multiple-choice prompt with dynamic option labels."""
+
+    def format_problem(self, problem: Mapping[str, Any]) -> str:
+        options = mmlu_pro_options(problem)
+        subject = str(problem.get("subject", "")).strip()
+        lines = ["The following is a multiple-choice question."]
+        if subject:
+            lines.append(f"Subject: {subject}")
+        lines.extend(
+            [
+                "",
+                "Question:",
+                str(problem.get("question", _problem_statement(problem))).strip(),
+                "",
+                "Options:",
+            ]
+        )
+        for label, value in options.items():
+            lines.append(f"{label}. {value}")
+        return "\n".join(lines)
+
+    def format_direct_task(self, problem: Mapping[str, Any]) -> str:
+        return format_mmlu_pro_direct_task(problem)
+
+    def answer_instruction(self, problem: Mapping[str, Any]) -> str:
+        labels = ", ".join(mmlu_pro_choice_labels(problem))
+        return (
+            f"Choose one option from: {labels}. "
+            "If reasoning is needed, keep it concise. "
+            "End with a final line: Answer: <option letter>."
+        )
+
+    def parse_answer(self, text: str, problem: Mapping[str, Any]) -> str:
+        return parse_mmlu_pro_answer_like(text, problem)
+
+    def matches(self, problem: Mapping[str, Any]) -> bool:
+        return str(problem.get("dataset_protocol", "")) == "mmlu_pro_jsonl_v1"
 
 
 @dataclass(frozen=True)
@@ -222,6 +264,7 @@ class GenericPromptSpec(DatasetPromptSpec):
 
 PROMPT_SPECS: dict[str, DatasetPromptSpec] = {
     "mmlu": MMLUPromptSpec(),
+    "mmlu_pro": MMLUProPromptSpec(),
     "gsm8k": GSM8KPromptSpec(),
     "humaneval": HumanEvalPromptSpec(),
     "multiagentbench": MultiAgentBenchPromptSpec(),
@@ -297,6 +340,74 @@ def parse_mmlu_answer_like(text: str) -> str:
     raise RuntimeError(f"cannot extract MMLU option from {text!r}")
 
 
+def parse_mmlu_pro_answer_like(
+    text: str,
+    problem_or_labels: Mapping[str, Any] | Iterable[str],
+) -> str:
+    """Extract one dynamic MMLU-Pro option label from answer-first short text."""
+
+    labels = (
+        mmlu_pro_choice_labels(problem_or_labels)
+        if isinstance(problem_or_labels, Mapping)
+        else tuple(str(label).strip().upper() for label in problem_or_labels)
+    )
+    labels = tuple(label for label in labels if label)
+    if not labels:
+        raise RuntimeError("MMLU-Pro answer parser needs at least one option label")
+
+    raw = text.strip()
+    if not raw:
+        raise RuntimeError("MMLU-Pro answer-like response is empty")
+    upper = raw.upper()
+    if upper in labels:
+        return upper
+
+    label_pattern = "|".join(
+        re.escape(label) for label in sorted(labels, key=len, reverse=True)
+    )
+    explicit_re = re.compile(
+        rf"(?:^|\n|[^\w])\s*(?:the\s+)?(?:final\s+answer|correct\s+answer|correct\s+option|answer|option|choice|letter)"
+        rf"\s*(?:is|:|\-)?\s*\**\(?({label_pattern})\)?\**(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    explicit_matches = explicit_re.findall(raw)
+    if explicit_matches:
+        return explicit_matches[-1].upper()
+
+    standalone_re = re.compile(
+        rf"^\s*\(?({label_pattern})\)?\s*[\.\。]?\s*$",
+        re.IGNORECASE,
+    )
+    standalone_matches = [
+        match.group(1).upper()
+        for line in raw.splitlines()
+        if (match := standalone_re.fullmatch(line.strip()))
+    ]
+    if standalone_matches:
+        return standalone_matches[-1]
+
+    option_line_re = re.compile(
+        rf"^\s*\**\(?({label_pattern})\)?\**\s*[\.\):\-]",
+        re.IGNORECASE,
+    )
+    option_line_matches = [
+        match.group(1).upper()
+        for line in raw.splitlines()
+        if (match := option_line_re.match(line.strip()))
+    ]
+    if option_line_matches:
+        return option_line_matches[-1]
+
+    leading_re = re.compile(
+        rf"^\s*\**\(?({label_pattern})\)?\**\s*[\.\):\-]",
+        re.IGNORECASE,
+    )
+    if match := leading_re.match(raw):
+        return match.group(1).upper()
+
+    raise RuntimeError(f"cannot extract MMLU-Pro option from {text!r}")
+
+
 def format_mmlu_direct_task(problem: Mapping[str, Any]) -> str:
     """Format MMLU exactly like the standalone DeepSeek baseline."""
 
@@ -315,6 +426,26 @@ def format_mmlu_direct_task(problem: Mapping[str, Any]) -> str:
         f"D. {options.get('D', options.get('d', ''))}\n\n"
         "Answer:"
     )
+
+
+def format_mmlu_pro_direct_task(problem: Mapping[str, Any]) -> str:
+    """Format MMLU-Pro with dynamic options in the direct-answer style."""
+
+    options = mmlu_pro_options(problem)
+    subject = str(problem.get("subject", "unknown")).replace("_", " ")
+    question = str(problem.get("question", _problem_statement(problem))).strip()
+    lines = [
+        f"Subject: {subject}",
+        "",
+        "Question:",
+        question,
+        "",
+        "Options:",
+    ]
+    for label, value in options.items():
+        lines.append(f"{label}. {value}")
+    lines.extend(["", "Answer:"])
+    return "\n".join(lines)
 
 
 def format_mmlu_fewshot_task(
@@ -364,11 +495,43 @@ def _mmlu_options(problem: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return options if {"A", "B", "C", "D"}.issubset(labels) else None
 
 
+def mmlu_pro_options(problem: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return ordered dynamic options for MMLU-Pro problems."""
+
+    options = _options(problem)
+    if not options:
+        raise ValueError("MMLU-Pro task requires dynamic multiple-choice options")
+    return {
+        label: options[label]
+        for label in sorted(options, key=_choice_label_sort_key)
+        if label in _CHOICE_LABELS
+    }
+
+
+def mmlu_pro_choice_labels(problem: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return legal MMLU-Pro option labels from a problem mapping."""
+
+    explicit = problem.get("choice_labels")
+    if isinstance(explicit, Iterable) and not isinstance(explicit, (str, bytes, Mapping)):
+        labels = tuple(
+            str(label).strip().upper()
+            for label in explicit
+            if str(label).strip().upper() in _CHOICE_LABELS
+        )
+        if labels:
+            return labels
+    return tuple(mmlu_pro_options(problem))
+
+
 def _options(problem: Mapping[str, Any]) -> Mapping[str, Any] | None:
     options = problem.get("options") or problem.get("choices")
     if not isinstance(options, Mapping):
         return None
     return {str(label).upper(): value for label, value in options.items()}
+
+
+def _choice_label_sort_key(label: str) -> tuple[int, str]:
+    return (_CHOICE_LABELS.index(label), label) if label in _CHOICE_LABELS else (999, label)
 
 
 def _compact_value(value: Any, *, limit: int) -> str:

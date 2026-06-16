@@ -17,6 +17,7 @@ import subprocess
 from typing import Any, Mapping
 
 from gogagent.reward.format import coerce_graph_message
+from gogagent.reward.oracles.mmlu_pro import score_mmlu_pro
 
 
 _MMLU_OPTION_LABELS = ("A", "B", "C", "D")
@@ -81,6 +82,8 @@ def score_answer(
     try:
         if dataset_name == "mmlu":
             correct = _score_mmlu(example, prediction, gold_value)
+        elif dataset_name == "mmlu_pro":
+            correct = score_mmlu_pro(example, prediction, gold_value)
         elif dataset_name == "gsm8k":
             correct = _score_gsm8k(prediction, gold_value)
         elif dataset_name == "humaneval":

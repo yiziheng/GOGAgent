@@ -19,6 +19,11 @@ from gogagent.prompt.mmlu import (
     MMLU_PROMPTS,
     MMLU_SOLVER_SYSTEM_PROMPT,
 )
+from gogagent.prompt.mmlu_pro import (
+    MMLU_PRO_AGENT_SYSTEM_PROMPTS,
+    MMLU_PRO_PROMPTS,
+    MMLU_PRO_SOLVER_SYSTEM_PROMPT,
+)
 from gogagent.prompt.multiagentbench import (
     MULTIAGENTBENCH_AGENT_SYSTEM_PROMPTS,
     MULTIAGENTBENCH_PROMPTS,
@@ -28,6 +33,7 @@ from gogagent.prompt.multiagentbench import (
 
 PROMPT_SETS: dict[str, AgentPromptSet] = {
     "mmlu": MMLU_PROMPTS,
+    "mmlu_pro": MMLU_PRO_PROMPTS,
     "gsm8k": GSM8K_PROMPTS,
     "humaneval": HUMANEVAL_PROMPTS,
     "multiagentbench": MULTIAGENTBENCH_PROMPTS,
@@ -90,6 +96,9 @@ __all__ = [
     "HUMANEVAL_AGENT_SYSTEM_PROMPTS",
     "HUMANEVAL_PROMPTS",
     "MMLU_AGENT_SYSTEM_PROMPTS",
+    "MMLU_PRO_AGENT_SYSTEM_PROMPTS",
+    "MMLU_PRO_PROMPTS",
+    "MMLU_PRO_SOLVER_SYSTEM_PROMPT",
     "MMLU_PROMPTS",
     "MMLU_SOLVER_SYSTEM_PROMPT",
     "MULTIAGENTBENCH_AGENT_SYSTEM_PROMPTS",

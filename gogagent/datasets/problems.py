@@ -30,6 +30,11 @@ def answer_format_for_dataset(dataset: str) -> str:
             "The GraphMessage answer field must be exactly one option letter: "
             "A, B, C, or D."
         )
+    if dataset_name == "mmlu_pro":
+        return (
+            "The GraphMessage answer field must be exactly one listed option letter "
+            "for this MMLU-Pro question."
+        )
     if dataset_name == "gsm8k":
         return "The GraphMessage answer field must contain only the final numeric answer."
     if dataset_name == "humaneval":

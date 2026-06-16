@@ -25,7 +25,11 @@ from gogagent.datasets.prompt_specs import format_mmlu_direct_task, parse_mmlu_a
 from gogagent.graph.schema import GraphMessage
 from gogagent.llm.client import AgentContext
 from gogagent.prompt import agent_system_prompt, context_instruction
-from gogagent.agents.mmlu_shuffle import choose_mmlu_vote, execute_mmlu_shuffle_vote
+from gogagent.agents.mmlu_shuffle import (
+    choice_labels_for_problem,
+    choose_mmlu_vote,
+    execute_mmlu_shuffle_vote,
+)
 
 
 @dataclass
@@ -53,7 +57,7 @@ class AdversarialJudgeAgent(Agent):
             raise RuntimeError(
                 f"{self.agent_type}.execute requires AgentContext with llm_client"
             )
-        if _is_mmlu_problem(problem):
+        if _is_mmlu_choice_problem(problem):
             return self._execute_mmlu_shuffled_vote(problem, inputs, context)
 
         upstream_raw = latest_answer(inputs)
@@ -158,6 +162,7 @@ class AdversarialJudgeAgent(Agent):
         answer = choose_mmlu_vote(
             [anchor_answer, shuffled_answer],
             fallback=anchor_answer,
+            labels=choice_labels_for_problem(problem),
         )
         return self.make_message(
             content=answer,
@@ -255,8 +260,8 @@ def format_direct_task(problem: Mapping[str, Any]) -> str:
     return format_problem(problem)
 
 
-def _is_mmlu_problem(problem: Mapping[str, Any]) -> bool:
-    return str(problem.get("dataset", "")).strip().lower() == "mmlu"
+def _is_mmlu_choice_problem(problem: Mapping[str, Any]) -> bool:
+    return str(problem.get("dataset", "")).strip().lower() in {"mmlu", "mmlu_pro"}
 
 
 def normalize_candidate_answer(value: Any, problem: Mapping[str, Any]) -> str:

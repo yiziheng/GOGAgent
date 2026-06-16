@@ -108,7 +108,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hard-trajectories", type=Path, required=True)
     parser.add_argument("--easy-data", type=Path, required=True)
-    parser.add_argument("--dataset", default="mmlu", choices=("mmlu", "gsm8k", "humaneval"))
+    parser.add_argument(
+        "--dataset",
+        default="mmlu",
+        choices=("mmlu", "mmlu_pro", "gsm8k", "humaneval"),
+    )
     parser.add_argument("--split", default="val")
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "artifacts" / "bc_trajectories")
     parser.add_argument("--run-id", default=None)

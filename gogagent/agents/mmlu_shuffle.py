@@ -15,10 +15,15 @@ from gogagent.agents.base import (
     llm_metadata,
     parent_context_inputs,
 )
-from gogagent.datasets.prompt_specs import parse_mmlu_answer_like
+from gogagent.datasets.prompt_specs import (
+    mmlu_pro_choice_labels,
+    mmlu_pro_options,
+    parse_mmlu_answer_like,
+    parse_mmlu_pro_answer_like,
+)
 from gogagent.graph.schema import GraphMessage
 from gogagent.llm import AgentContext
-from gogagent.prompt import MMLU_SOLVER_SYSTEM_PROMPT
+from gogagent.prompt import MMLU_SOLVER_SYSTEM_PROMPT, agent_system_prompt
 
 
 _SHUFFLE_RNG = random.Random(int(os.environ.get("GOGAGENT_MMLU_SHUFFLE_SEED", "18")))
@@ -77,19 +82,24 @@ class MMLUMajorityVoteAgent(Agent):
         """Vote deterministically; no extra LLM call is needed."""
 
         del context
-        require_mmlu(problem)
+        require_mmlu_choice_problem(problem)
         parent_inputs = parent_context_inputs(problem)
         anchor_answer = latest_answer(parent_inputs)
         if anchor_answer is None:
             raise RuntimeError(f"{self.agent_type} requires an upstream anchor answer")
-        anchor_answer = parse_mmlu_answer_like(anchor_answer)
+        anchor_answer = parse_choice_answer(anchor_answer, problem)
 
         shuffled_votes = [
-            parse_mmlu_answer_like(message.answer or message.content)
+            parse_choice_answer(message.answer or message.content, problem)
             for message in inputs.values()
             if message.role == ShuffledMMLUSolverAgent.role
         ]
-        answer = choose_mmlu_vote([anchor_answer, *shuffled_votes], fallback=anchor_answer)
+        labels = choice_labels_for_problem(problem)
+        answer = choose_mmlu_vote(
+            [anchor_answer, *shuffled_votes],
+            fallback=anchor_answer,
+            labels=labels,
+        )
         return self.make_message(
             content=answer,
             answer=answer,
@@ -117,7 +127,7 @@ def execute_mmlu_shuffle_vote(
 ) -> GraphMessage:
     """Run one DeepSeek MMLU vote with shuffled option labels."""
 
-    require_mmlu(problem)
+    require_mmlu_choice_problem(problem)
     if context is None or context.llm_client is None:
         raise RuntimeError(f"{agent.agent_type}.execute requires AgentContext with llm_client")
 
@@ -125,9 +135,9 @@ def execute_mmlu_shuffle_vote(
     response = context.llm_client.chat_text(
         role=ShuffledMMLUSolverAgent.role,
         prompt=prompt,
-        system_prompt=MMLU_SOLVER_SYSTEM_PROMPT,
+        system_prompt=shuffle_solver_system_prompt(problem),
     )
-    displayed_answer = parse_mmlu_answer_like(response.text)
+    displayed_answer = parse_displayed_answer(response.text, displayed_to_original)
     if displayed_answer not in displayed_to_original:
         raise RuntimeError(f"invalid displayed MMLU answer: {displayed_answer!r}")
     answer = displayed_to_original[displayed_answer]
@@ -152,8 +162,10 @@ def execute_mmlu_shuffle_vote(
 def format_mmlu_shuffled_prompt(
     problem: Mapping[str, Any],
 ) -> tuple[str, dict[str, str]]:
-    """Format an MMLU prompt exactly like the standalone shuffled baseline."""
+    """Format an MMLU/MMLU-Pro prompt exactly like the shuffled baseline."""
 
+    if dataset_name(problem) == "mmlu_pro":
+        return format_mmlu_pro_shuffled_prompt(problem)
     options = problem.get("options")
     if not isinstance(options, Mapping) or not all(letter in options for letter in "ABCD"):
         raise ValueError("MMLU shuffled vote requires A/B/C/D options")
@@ -175,10 +187,43 @@ def format_mmlu_shuffled_prompt(
     return prompt, displayed_to_original
 
 
-def choose_mmlu_vote(votes: list[str | None], *, fallback: str | None) -> str:
+def format_mmlu_pro_shuffled_prompt(
+    problem: Mapping[str, Any],
+) -> tuple[str, dict[str, str]]:
+    """Format a shuffled MMLU-Pro prompt with dynamic option labels."""
+
+    options = mmlu_pro_options(problem)
+    labels = list(mmlu_pro_choice_labels(problem))
+    if len(labels) < 2:
+        raise ValueError("MMLU-Pro shuffled vote requires at least two options")
+    original_letters = list(labels)
+    _SHUFFLE_RNG.shuffle(original_letters)
+    displayed_to_original = dict(zip(labels, original_letters, strict=True))
+    displayed_lines = [
+        f"{displayed_letter}. {options[original_letter]}"
+        for displayed_letter, original_letter in displayed_to_original.items()
+    ]
+    subject = str(problem.get("subject", "unknown")).replace("_", " ")
+    prompt = (
+        f"Subject: {subject}\n\n"
+        f"Question:\n{problem['question']}\n\n"
+        "Options:\n"
+        + "\n".join(displayed_lines)
+        + "\n\nAnswer:"
+    )
+    return prompt, displayed_to_original
+
+
+def choose_mmlu_vote(
+    votes: list[str | None],
+    *,
+    fallback: str | None,
+    labels: tuple[str, ...] = ("A", "B", "C", "D"),
+) -> str:
     """Choose a 2-vote majority, otherwise return the anchor fallback."""
 
-    counts = Counter(vote for vote in votes if vote in {"A", "B", "C", "D"})
+    legal = set(labels)
+    counts = Counter(vote for vote in votes if vote in legal)
     if not counts:
         if fallback is None:
             raise RuntimeError("MMLU vote has no valid candidates and no fallback")
@@ -191,9 +236,58 @@ def choose_mmlu_vote(votes: list[str | None], *, fallback: str | None) -> str:
     return fallback
 
 
-def require_mmlu(problem: Mapping[str, Any]) -> None:
-    """Fail explicitly if the shuffled self-consistency module is used elsewhere."""
+def require_mmlu_choice_problem(problem: Mapping[str, Any]) -> None:
+    """Fail explicitly if shuffled self-consistency is used elsewhere."""
 
-    dataset = str(problem.get("dataset", "")).strip().lower()
-    if dataset != "mmlu":
-        raise RuntimeError("MMLU shuffled self-consistency is only defined for dataset='mmlu'")
+    dataset = dataset_name(problem)
+    if dataset not in {"mmlu", "mmlu_pro"}:
+        raise RuntimeError(
+            "MMLU shuffled self-consistency is only defined for "
+            "dataset='mmlu' or dataset='mmlu_pro'"
+        )
+
+
+def dataset_name(problem: Mapping[str, Any]) -> str:
+    """Return the normalized dataset name carried by a problem mapping."""
+
+    return str(problem.get("dataset", "")).strip().lower()
+
+
+def choice_labels_for_problem(problem: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return legal option labels for MMLU-style choice tasks."""
+
+    if dataset_name(problem) == "mmlu_pro":
+        return mmlu_pro_choice_labels(problem)
+    return ("A", "B", "C", "D")
+
+
+def parse_choice_answer(value: Any, problem: Mapping[str, Any]) -> str:
+    """Parse an original-label answer for MMLU or MMLU-Pro."""
+
+    if dataset_name(problem) == "mmlu_pro":
+        return parse_mmlu_pro_answer_like(str(value), problem)
+    return parse_mmlu_answer_like(str(value))
+
+
+def parse_displayed_answer(
+    value: Any,
+    displayed_to_original: Mapping[str, str],
+) -> str:
+    """Parse an answer expressed in the displayed shuffled label space."""
+
+    labels = tuple(displayed_to_original)
+    if len(labels) == 4 and set(labels) == {"A", "B", "C", "D"}:
+        return parse_mmlu_answer_like(str(value))
+    return parse_mmlu_pro_answer_like(str(value), labels)
+
+
+def shuffle_solver_system_prompt(problem: Mapping[str, Any]) -> str:
+    """Return the dataset-specific system prompt for shuffled solver calls."""
+
+    if dataset_name(problem) == "mmlu_pro":
+        return agent_system_prompt(
+            problem,
+            "solver",
+            role=ShuffledMMLUSolverAgent.role,
+        )
+    return MMLU_SOLVER_SYSTEM_PROMPT

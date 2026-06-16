@@ -25,13 +25,15 @@ Usage:
 
 Example:
   bash quick_start.sh mmlu
+  bash quick_start.sh mmlu_pro
 
 The script first looks for:
   checkpoints/DATASET/policy.pt
 
 If the policy exists, it runs eval_policy directly.
-If the policy is missing, it trains BC, runs a small RL refinement, saves the
-final policy to checkpoints/DATASET/policy.pt, then runs eval_policy.
+For MMLU, if the policy is missing, it trains BC, runs a small RL refinement,
+saves the final policy to checkpoints/mmlu/policy.pt, then runs eval_policy.
+For MMLU-Pro, it reuses checkpoints/mmlu/policy.pt as checkpoints/mmlu_pro/policy.pt.
 
 Optional environment knobs:
   PYTHON, DEVICE, TASK_ENCODER_DEVICE, EVAL_LIMIT
@@ -62,11 +64,21 @@ if [[ $# -ne 1 ]]; then
 fi
 
 DATASET="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+case "${DATASET}" in
+  mmlupro)
+    DATASET="mmlu_pro"
+    ;;
+esac
 POLICY_PATH="${REPO_ROOT}/checkpoints/${DATASET}/policy.pt"
 ENV_FILE="${REPO_ROOT}/.env"
+ALLOW_AUTOTRAIN=0
+FALLBACK_POLICY_PATH=""
+SHUFFLE_SEED=42
 
 case "${DATASET}" in
   mmlu)
+    ALLOW_AUTOTRAIN=1
+    SHUFFLE_SEED=18
     EVAL_DATA_PATH="${REPO_ROOT}/data/MMLU_subsets/gptswarm153/val"
     EVAL_SPLIT="val"
     EVAL_SELECTION_JSONL="${REPO_ROOT}/data_splits/mmlu/gptswarm153_selection.jsonl"
@@ -83,8 +95,23 @@ case "${DATASET}" in
       die "no MMLU training data found. Expected data/MMLU_subsets/bc_train_test150/test or data/MMLU/data/dev"
     fi
     ;;
+  mmlu_pro)
+    SHUFFLE_SEED=42
+    FALLBACK_POLICY_PATH="${REPO_ROOT}/checkpoints/mmlu/policy.pt"
+    if [[ -d "${REPO_ROOT}/data/MMLU-Pro/test500" ]]; then
+      EVAL_DATA_PATH="${REPO_ROOT}/data/MMLU-Pro/test500"
+    elif [[ -d "${REPO_ROOT}/data/MMLU_Pro_subsets/test500" ]]; then
+      EVAL_DATA_PATH="${REPO_ROOT}/data/MMLU_Pro_subsets/test500"
+    else
+      EVAL_DATA_PATH="${REPO_ROOT}/data/MMLU-Pro/test500"
+    fi
+    EVAL_SPLIT="test"
+    EVAL_SELECTION_JSONL=""
+    EVAL_OUTPUT_DIR="${REPO_ROOT}/artifacts/evals/policy_mmlu_pro"
+    EVAL_RUN_ID="quickstart-mmlu_pro-policy"
+    ;;
   *)
-    die "unsupported dataset '${DATASET}'. quick_start currently has a concrete default pipeline for: mmlu"
+    die "unsupported dataset '${DATASET}'. quick_start currently has concrete defaults for: mmlu, mmlu_pro"
     ;;
 esac
 
@@ -100,7 +127,15 @@ cd "${REPO_ROOT}"
 
 if [[ -f "${POLICY_PATH}" ]]; then
   echo "[quick-start] found policy: ${POLICY_PATH}"
+elif [[ "${DATASET}" == "mmlu_pro" ]]; then
+  require_file "${FALLBACK_POLICY_PATH}"
+  mkdir -p "$(dirname "${POLICY_PATH}")"
+  cp "${FALLBACK_POLICY_PATH}" "${POLICY_PATH}"
+  echo "[quick-start] copied MMLU policy for MMLU-Pro: ${POLICY_PATH}"
 else
+  if [[ "${ALLOW_AUTOTRAIN}" -ne 1 ]]; then
+    die "no policy found at ${POLICY_PATH} and auto-training is disabled for ${DATASET}"
+  fi
   echo "[quick-start] no policy found at ${POLICY_PATH}"
   echo "[quick-start] training a ${DATASET} policy first"
 
@@ -189,7 +224,7 @@ if [[ -n "${EVAL_LIMIT}" ]]; then
   EVAL_CMD+=(--limit "${EVAL_LIMIT}")
 fi
 
-"${EVAL_CMD[@]}"
+GOGAGENT_MMLU_SHUFFLE_SEED="${SHUFFLE_SEED}" "${EVAL_CMD[@]}"
 
 echo
 echo "[quick-start] done"
